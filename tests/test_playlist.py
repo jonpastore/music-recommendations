@@ -40,3 +40,11 @@ class PlaylistFormattingTests(unittest.TestCase):
         self.assertTrue(all(len(message) <= 2000 for message in messages))
         self.assertEqual(1, len(messages))
         self.assertIn("An artist with a long name — Discography", "\n".join(messages))
+
+    def test_supports_discography_album_and_full_track_post_formats(self):
+        from app.playlist import discord_playlist_messages
+        tracks = [Track("One", "Artist", "Album"), Track("Two", "Artist", "Album")]
+        self.assertIn("Artist — Discography", discord_playlist_messages("P", "https://x", tracks, "discography")[0])
+        self.assertIn("Artist — Album", discord_playlist_messages("P", "https://x", tracks, "album")[0])
+        self.assertIn("Artist — One", discord_playlist_messages("P", "https://x", tracks, "tracks")[0])
+        self.assertIn("Artist — Two", discord_playlist_messages("P", "https://x", tracks, "tracks")[0])

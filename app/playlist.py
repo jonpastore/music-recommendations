@@ -33,24 +33,31 @@ def as_listenbrainz_payload(tracks: list[Track], listened_at: int) -> dict:
     }
 
 
-def discord_playlist_message(name: str, url: str, tracks: list[Track]) -> str:
+def discord_playlist_message(name: str, url: str, tracks: list[Track], mode: str = "album") -> str:
     """Return the first Discord-safe message for backward compatibility."""
-    return discord_playlist_messages(name, url, tracks)[0]
+    return discord_playlist_messages(name, url, tracks, mode)[0]
 
 
-def discord_playlist_messages(name: str, url: str, tracks: list[Track]) -> list[str]:
+def discord_playlist_messages(name: str, url: str, tracks: list[Track], mode: str = "album") -> list[str]:
     """Format unique artist/album choices as Discord-safe webhook messages."""
     messages: list[str] = []
     prefix = f"**{name}**\n[Open in TIDAL]({url})\n\n"
     current = prefix
     seen: set[tuple[str, str]] = set()
     for track in tracks:
-        album = track.album or "Discography"
-        key = (track.artist.casefold(), album.casefold())
+        if mode == "tracks":
+            label = track.title
+            key = (track.artist.casefold(), track.title.casefold())
+        elif mode == "discography":
+            label = "Discography"
+            key = (track.artist.casefold(), label.casefold())
+        else:
+            label = track.album or "Discography"
+            key = (track.artist.casefold(), label.casefold())
         if key in seen:
             continue
         seen.add(key)
-        line = f"• {track.artist} — {album}"
+        line = f"• {track.artist} — {label}"
         if len(current) + len(line) + 1 > 2000 and current != prefix:
             messages.append(current.rstrip())
             current = f"**{name}** (continued)\n[Open in TIDAL]({url})\n\n"
