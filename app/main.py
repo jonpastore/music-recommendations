@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app.playlist import Track, as_listenbrainz_payload, discord_playlist_message
+from app.tidal import verification_url
 
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", "/config"))
 ENV_FILE = CONFIG_DIR / ".env"
@@ -74,7 +75,7 @@ def tidal_login_start():
     global tidal_session, tidal_login
     tidal_session = tidalapi.Session()
     login, tidal_login = tidal_session.login_oauth()
-    return {"verification_url": login.verification_uri_complete}
+    return {"verification_url": verification_url(login.verification_uri_complete)}
 
 
 @app.post("/api/tidal/login/complete")
