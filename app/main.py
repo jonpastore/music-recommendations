@@ -69,7 +69,7 @@ def load_tidal_session() -> tidalapi.Session:
 @app.get("/api/status")
 def status():
     config = settings()
-    return {"discord": bool(config.get("DISCORD_WEBHOOK_URL")), "listenbrainz": bool(config.get("LISTENBRAINZ_TOKEN")), "tidal_session": (CONFIG_DIR / "tidal-session.json").exists()}
+    return {"version": os.environ.get("APP_VERSION", "development"), "discord": bool(config.get("DISCORD_WEBHOOK_URL")), "listenbrainz": bool(config.get("LISTENBRAINZ_TOKEN")), "tidal_session": (CONFIG_DIR / "tidal-session.json").exists()}
 
 
 @app.post("/api/tidal/login")
