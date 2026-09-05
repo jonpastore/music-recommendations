@@ -34,8 +34,22 @@ def as_listenbrainz_payload(tracks: list[Track], listened_at: int) -> dict:
 
 
 def discord_playlist_message(name: str, url: str, tracks: list[Track]) -> str:
-    lines = [f"**{name}**", "[Open in TIDAL](%s)" % url, ""]
-    lines.extend(f"• {track.artist} — {track.title}" for track in tracks[:50])
-    if len(tracks) > 50:
-        lines.append(f"• …and {len(tracks) - 50} more")
-    return "\n".join(lines)
+    """Return the first Discord-safe message for backward compatibility."""
+    return discord_playlist_messages(name, url, tracks)[0]
+
+
+def discord_playlist_messages(name: str, url: str, tracks: list[Track]) -> list[str]:
+    """Format every selected track as webhook messages of at most 2,000 characters."""
+    messages: list[str] = []
+    prefix = f"**{name}**\n[Open in TIDAL]({url})\n\n"
+    current = prefix
+    for track in tracks:
+        line = f"• {track.artist} — {track.title}"
+        if len(current) + len(line) + 1 > 2000 and current != prefix:
+            messages.append(current.rstrip())
+            current = f"**{name}** (continued)\n[Open in TIDAL]({url})\n\n"
+        if len(line) + len(current) + 1 > 2000:
+            line = line[: 1999 - len(current)] + "…"
+        current += line + "\n"
+    messages.append(current.rstrip())
+    return messages

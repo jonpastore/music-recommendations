@@ -26,3 +26,13 @@ class PlaylistFormattingTests(unittest.TestCase):
         self.assertIn("Vampire Weekend — A-Punk", message)
         self.assertIn("Open in TIDAL", message)
 
+
+    def test_splits_long_playlists_into_discord_safe_messages(self):
+        from app.playlist import discord_playlist_messages
+
+        tracks = [Track(title=f"Song {i}: " + "x" * 50, artist="An artist with a long name") for i in range(100)]
+        messages = discord_playlist_messages("Long playlist", "https://listen.tidal.com/playlist/example", tracks)
+
+        self.assertGreater(len(messages), 1)
+        self.assertTrue(all(len(message) <= 2000 for message in messages))
+        self.assertIn("Song 99", "\n".join(messages))

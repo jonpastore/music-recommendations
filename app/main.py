@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from app.playlist import Track, as_listenbrainz_payload, discord_playlist_message
+from app.playlist import Track, as_listenbrainz_payload, discord_playlist_messages
 from app.tidal import expiry_time_from_storage, session_data_for_storage, verification_url
 
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", "/config"))
@@ -114,9 +114,10 @@ def dispatch(request: DispatchRequest):
         raise HTTPException(400, "Select at least one track")
     if not config.get("DISCORD_WEBHOOK_URL"):
         raise HTTPException(400, "DISCORD_WEBHOOK_URL is not configured")
-    message = discord_playlist_message(request.playlist_name, request.playlist_url, tracks)
-    response = requests.post(config["DISCORD_WEBHOOK_URL"], json={"content": message}, timeout=30)
-    response.raise_for_status()
+    messages = discord_playlist_messages(request.playlist_name, request.playlist_url, tracks)
+    for message in messages:
+        response = requests.post(config["DISCORD_WEBHOOK_URL"], json={"content": message}, timeout=30)
+        response.raise_for_status()
     submitted = 0
     if request.confirmed_listens:
         if not config.get("LISTENBRAINZ_TOKEN"):
@@ -125,7 +126,7 @@ def dispatch(request: DispatchRequest):
         lb_response = requests.post("https://api.listenbrainz.org/1/submit-listens", json=payload, headers={"Authorization": f"Token {config['LISTENBRAINZ_TOKEN']}"}, timeout=30)
         lb_response.raise_for_status()
         submitted = len(tracks)
-    return {"discord_posted": True, "listenbrainz_submitted": submitted}
+    return {"discord_posted": True, "discord_messages": len(messages), "listenbrainz_submitted": submitted}
 
 
 @app.post("/api/recommendations")
