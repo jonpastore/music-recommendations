@@ -1,0 +1,1 @@
+"""TIDAL playlist bridge application."""

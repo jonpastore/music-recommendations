@@ -1,0 +1,9 @@
+services:
+  tidal-playlist-bridge:
+    build: .
+    container_name: tidal-playlist-bridge
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./config:/config
+    restart: unless-stopped
