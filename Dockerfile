@@ -1,5 +1,5 @@
 FROM python:3.12-slim
-ARG VERSION=0.4.1
+ARG VERSION=0.4.2
 LABEL org.opencontainers.image.title="TIDAL Playlist Bridge" \
       org.opencontainers.image.version="$VERSION" \
       org.opencontainers.image.source="https://github.com/jonpastore/music-recommendations"
