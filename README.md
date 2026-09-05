@@ -1,6 +1,6 @@
 # TIDAL Playlist Bridge
 
-Current local image version: `0.4.0`.
+Current local image version: `0.4.1`.
 
 A self-hosted Unraid web app for:
 
@@ -18,7 +18,7 @@ Import `unraid/templates/tidal-playlist-bridge.xml` into Unraid Docker Manager. 
 To rebuild and redeploy a local release from this repository:
 
 ```bash
-VERSION=0.4.0
+VERSION=0.4.1
 docker build --build-arg VERSION="$VERSION" -t tidal-playlist-bridge:"$VERSION" .
 docker rm -f tidal-playlist-bridge
 # Recreate from the Unraid template, selecting tidal-playlist-bridge:$VERSION.
