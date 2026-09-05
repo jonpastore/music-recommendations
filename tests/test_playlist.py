@@ -18,12 +18,16 @@ class PlaylistFormattingTests(unittest.TestCase):
         self.assertEqual("Taylor Swift", payload["payload"][0]["track_metadata"]["artist_name"])
         self.assertEqual("tidal.com", payload["payload"][0]["track_metadata"]["additional_info"]["music_service"])
 
-    def test_formats_a_readable_discord_playlist_message(self):
-        message = discord_playlist_message("Road Trip", "https://listen.tidal.com/playlist/example", self.tracks)
+    def test_formats_a_compact_artist_and_album_discord_message(self):
+        tracks = self.tracks + [Track(title="Lover", artist="Taylor Swift", album="Lover"), Track(title="Single", artist="Mitski")]
+        message = discord_playlist_message("Road Trip", "https://listen.tidal.com/playlist/example", tracks)
 
         self.assertIn("**Road Trip**", message)
-        self.assertIn("Taylor Swift — Paper Rings", message)
-        self.assertIn("Vampire Weekend — A-Punk", message)
+        self.assertIn("Taylor Swift — Lover", message)
+        self.assertIn("Vampire Weekend — Vampire Weekend", message)
+        self.assertIn("Mitski — Discography", message)
+        self.assertNotIn("Paper Rings", message)
+        self.assertEqual(1, message.count("Taylor Swift — Lover"))
         self.assertIn("Open in TIDAL", message)
 
 
@@ -33,6 +37,6 @@ class PlaylistFormattingTests(unittest.TestCase):
         tracks = [Track(title=f"Song {i}: " + "x" * 50, artist="An artist with a long name") for i in range(100)]
         messages = discord_playlist_messages("Long playlist", "https://listen.tidal.com/playlist/example", tracks)
 
-        self.assertGreater(len(messages), 1)
         self.assertTrue(all(len(message) <= 2000 for message in messages))
-        self.assertIn("Song 99", "\n".join(messages))
+        self.assertEqual(1, len(messages))
+        self.assertIn("An artist with a long name — Discography", "\n".join(messages))

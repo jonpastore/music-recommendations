@@ -39,12 +39,18 @@ def discord_playlist_message(name: str, url: str, tracks: list[Track]) -> str:
 
 
 def discord_playlist_messages(name: str, url: str, tracks: list[Track]) -> list[str]:
-    """Format every selected track as webhook messages of at most 2,000 characters."""
+    """Format unique artist/album choices as Discord-safe webhook messages."""
     messages: list[str] = []
     prefix = f"**{name}**\n[Open in TIDAL]({url})\n\n"
     current = prefix
+    seen: set[tuple[str, str]] = set()
     for track in tracks:
-        line = f"• {track.artist} — {track.title}"
+        album = track.album or "Discography"
+        key = (track.artist.casefold(), album.casefold())
+        if key in seen:
+            continue
+        seen.add(key)
+        line = f"• {track.artist} — {album}"
         if len(current) + len(line) + 1 > 2000 and current != prefix:
             messages.append(current.rstrip())
             current = f"**{name}** (continued)\n[Open in TIDAL]({url})\n\n"
