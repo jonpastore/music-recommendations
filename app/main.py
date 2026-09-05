@@ -120,29 +120,29 @@ def dispatch(request: DispatchRequest):
     for message in messages:
         response = requests.post(config["DISCORD_WEBHOOK_URL"], json={"content": message}, timeout=30)
         response.raise_for_status()
-    submitted = 0
-    if config.get("LISTENBRAINZ_TOKEN"):
-        payload = as_listenbrainz_payload(tracks, int(time.time()))
-        lb_response = requests.post("https://api.listenbrainz.org/1/submit-listens", json=payload, headers={"Authorization": f"Token {config['LISTENBRAINZ_TOKEN']}"}, timeout=30)
-        lb_response.raise_for_status()
-        submitted = len(tracks)
-    return {"discord_posted": True, "discord_messages": len(messages), "listenbrainz_submitted": submitted}
+    return {"discord_posted": True, "discord_messages": len(messages)}
 
 
 @app.post("/api/recommendations")
-def recommendations():
+def recommendations(request: DispatchRequest):
     config = settings()
     user = config.get("LISTENBRAINZ_USERNAME")
     webhook = config.get("DISCORD_WEBHOOK_URL")
-    if not user or not webhook:
-        raise HTTPException(400, "LISTENBRAINZ_USERNAME and DISCORD_WEBHOOK_URL are required")
+    token = config.get("LISTENBRAINZ_TOKEN")
+    tracks = [track_from_dict(track) for track in request.tracks]
+    if not user or not webhook or not token:
+        raise HTTPException(400, "LISTENBRAINZ_USERNAME, LISTENBRAINZ_TOKEN, and DISCORD_WEBHOOK_URL are required")
+    if not tracks:
+        raise HTTPException(400, "Select at least one track")
+    response = requests.post("https://api.listenbrainz.org/1/submit-listens", json=as_listenbrainz_payload(tracks, int(time.time())), headers={"Authorization": f"Token {token}"}, timeout=30)
+    response.raise_for_status()
     data = requests.get(f"https://api.listenbrainz.org/1/user/{user}/playlists/recommendations", timeout=30).json()
     playlists = data.get("playlists", [])
     if not playlists:
-        return {"posted": False, "reason": "No recommendations available yet"}
+        return {"listenbrainz_submitted": len(tracks), "posted": False, "reason": "No recommendations available yet"}
     names = "\n".join(f"• {item.get('title', 'Untitled playlist')}" for item in playlists)
     requests.post(webhook, json={"content": f"New ListenBrainz recommendations for **{user}**:\n{names}\nhttps://listenbrainz.org/user/{user}/playlists/"}, timeout=30).raise_for_status()
-    return {"posted": True, "count": len(playlists)}
+    return {"listenbrainz_submitted": len(tracks), "posted": True, "count": len(playlists)}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -150,4 +150,4 @@ def home():
     return HTML
 
 
-HTML = """<!doctype html><title>TIDAL Playlist Bridge</title><style>body{font:16px system-ui;max-width:760px;margin:3rem auto;padding:0 1rem}textarea,input,select{width:100%;margin:.4rem 0;padding:.6rem}button{padding:.6rem 1rem;margin:.3rem 0}pre{background:#eee;padding:1rem;white-space:pre-wrap}</style><h1>TIDAL Playlist Bridge</h1><p>Post selected playlist tracks to Discord and ListenBrainz.</p><button onclick=login()>Connect TIDAL</button><button onclick=finishLogin()>Finish TIDAL login</button><button onclick=playlists()>Load TIDAL playlists</button><select id=p onchange=fetchPlaylist(this.value)><option>Select a playlist</option></select><label>Playlist name<input id=n value="TIDAL playlist"></label><label>Playlist link<input id=u></label><label>Tracks, one per line: Artist — Track — Album<textarea id=t rows=10></textarea></label><br><label>Discord post format<select id=f><option value="discography">Unique artists — Discography</option><option value="album" selected>Unique artist — Album</option><option value="tracks">Full track list</option></select></label><button onclick=send()>Post selected tracks</button><button onclick=recs()>Post ListenBrainz recommendations</button><pre id=o>Loading…</pre><script>const o=document.querySelector('#o');async function api(url,opts={}){let r=await fetch(url,opts);let j=await r.json().catch(()=>({detail:r.statusText}));if(!r.ok)throw Error(j.detail||JSON.stringify(j));return j}async function show(action,work){try{o.textContent=action+'…';let x=await work();o.textContent=JSON.stringify(x,null,2)}catch(e){o.textContent='Error: '+e.message}}async function login(){await show('Starting TIDAL sign-in',async()=>{let x=await api('/api/tidal/login',{method:'POST'});open(x.verification_url,'_blank');return {next:'Sign in to TIDAL in the new tab, then return here and click Finish TIDAL login.'}})}async function finishLogin(){await show('Checking TIDAL authorization',()=>api('/api/tidal/login/complete',{method:'POST'}))}async function playlists(){await show('Loading TIDAL playlists',async()=>{let x=await api('/api/tidal/playlists');p.innerHTML='<option>Select a playlist</option>'+x.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');return {loaded:x.length}})}async function fetchPlaylist(id){if(!id)return;let x=await api('/api/tidal/playlists/'+id);n.value=x.name;u.value=x.url;t.value=x.tracks.map(v=>`${v.artist} — ${v.title} — ${v.album||''}`).join('\\n')}async function send(){let tracks=t.value.split('\\n').filter(Boolean).map(x=>{let [artist,title,album]=x.split(' — ');return {artist,title,album}});o.textContent=JSON.stringify(await api('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_name:n.value,playlist_url:u.value,tracks,discord_format:f.value})}),null,2)}async function recs(){o.textContent=JSON.stringify(await api('/api/recommendations',{method:'POST'}),null,2)}api('/api/status').then(x=>o.textContent='Configuration: '+JSON.stringify(x,null,2)).catch(e=>o.textContent=e)</script>"""
+HTML = """<!doctype html><title>TIDAL Playlist Bridge</title><style>body{font:16px system-ui;max-width:760px;margin:3rem auto;padding:0 1rem}textarea,input,select{width:100%;margin:.4rem 0;padding:.6rem}button{padding:.6rem 1rem;margin:.3rem 0}pre{background:#eee;padding:1rem;white-space:pre-wrap}</style><h1>TIDAL Playlist Bridge</h1><p>Post selected playlist tracks directly to Discord, or submit them to ListenBrainz and post available recommendations.</p><button onclick=login()>Connect TIDAL</button><button onclick=finishLogin()>Finish TIDAL login</button><button onclick=playlists()>Load TIDAL playlists</button><select id=p onchange=fetchPlaylist(this.value)><option>Select a playlist</option></select><label>Playlist name<input id=n value="TIDAL playlist"></label><label>Playlist link<input id=u></label><label>Tracks, one per line: Artist — Track — Album<textarea id=t rows=10></textarea></label><br><label>Discord post format<select id=f><option value="discography">Unique artists — Discography</option><option value="album" selected>Unique artist — Album</option><option value="tracks">Full track list</option></select></label><button onclick=send()>Post selected tracks</button><button onclick=recs()>Post ListenBrainz recommendations</button><pre id=o>Loading…</pre><script>const o=document.querySelector('#o');async function api(url,opts={}){let r=await fetch(url,opts);let j=await r.json().catch(()=>({detail:r.statusText}));if(!r.ok)throw Error(j.detail||JSON.stringify(j));return j}async function show(action,work){try{o.textContent=action+'…';let x=await work();o.textContent=JSON.stringify(x,null,2)}catch(e){o.textContent='Error: '+e.message}}async function login(){await show('Starting TIDAL sign-in',async()=>{let x=await api('/api/tidal/login',{method:'POST'});open(x.verification_url,'_blank');return {next:'Sign in to TIDAL in the new tab, then return here and click Finish TIDAL login.'}})}async function finishLogin(){await show('Checking TIDAL authorization',()=>api('/api/tidal/login/complete',{method:'POST'}))}async function playlists(){await show('Loading TIDAL playlists',async()=>{let x=await api('/api/tidal/playlists');p.innerHTML='<option>Select a playlist</option>'+x.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');return {loaded:x.length}})}async function fetchPlaylist(id){if(!id)return;let x=await api('/api/tidal/playlists/'+id);n.value=x.name;u.value=x.url;t.value=x.tracks.map(v=>`${v.artist} — ${v.title} — ${v.album||''}`).join('\\n')}async function send(){let tracks=t.value.split('\\n').filter(Boolean).map(x=>{let [artist,title,album]=x.split(' — ');return {artist,title,album}});o.textContent=JSON.stringify(await api('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_name:n.value,playlist_url:u.value,tracks,discord_format:f.value})}),null,2)}async function recs(){let tracks=t.value.split('\n').filter(Boolean).map(x=>{let [artist,title,album]=x.split(' — ');return {artist,title,album}});await show('Submitting to ListenBrainz and checking recommendations',()=>api('/api/recommendations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_name:n.value,playlist_url:u.value,tracks,discord_format:f.value})}))}api('/api/status').then(x=>o.textContent='Configuration: '+JSON.stringify(x,null,2)).catch(e=>o.textContent=e)</script>"""
