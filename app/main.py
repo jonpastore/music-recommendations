@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from app.playlist import Track, as_listenbrainz_payload, discord_playlist_message
-from app.tidal import verification_url
+from app.tidal import expiry_time_from_storage, session_data_for_storage, verification_url
 
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", "/config"))
 ENV_FILE = CONFIG_DIR / ".env"
@@ -45,10 +45,10 @@ tidal_login = None
 
 def save_tidal_session(session: tidalapi.Session) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    (CONFIG_DIR / "tidal-session.json").write_text(json.dumps({
-        "token_type": session.token_type, "access_token": session.access_token,
-        "refresh_token": session.refresh_token, "expiry_time": session.expiry_time,
-    }))
+    (CONFIG_DIR / "tidal-session.json").write_text(json.dumps(session_data_for_storage(
+        session.token_type, session.access_token, session.refresh_token,
+        session.expiry_time, session.is_pkce,
+    )))
 
 
 def load_tidal_session() -> tidalapi.Session:
@@ -59,7 +59,9 @@ def load_tidal_session() -> tidalapi.Session:
     if not saved.exists():
         raise HTTPException(400, "Connect TIDAL first")
     tidal_session = tidalapi.Session()
-    if not tidal_session.load_oauth_session(**json.loads(saved.read_text())):
+    credentials = json.loads(saved.read_text())
+    credentials["expiry_time"] = expiry_time_from_storage(credentials.get("expiry_time"))
+    if not tidal_session.load_oauth_session(**credentials):
         raise HTTPException(401, "TIDAL session expired; connect again")
     return tidal_session
 
@@ -147,4 +149,4 @@ def home():
     return HTML
 
 
-HTML = """<!doctype html><title>TIDAL Playlist Bridge</title><style>body{font:16px system-ui;max-width:760px;margin:3rem auto;padding:0 1rem}textarea,input,select{width:100%;margin:.4rem 0;padding:.6rem}button{padding:.6rem 1rem;margin:.3rem 0}pre{background:#eee;padding:1rem;white-space:pre-wrap}</style><h1>TIDAL Playlist Bridge</h1><p>Post selected playlist tracks to Discord. Confirming listens is only for tracks actually heard in the past.</p><button onclick=login()>Connect TIDAL</button><button onclick=finishLogin()>Finish TIDAL login</button><button onclick=playlists()>Load TIDAL playlists</button><select id=p onchange=fetchPlaylist(this.value)><option>Select a playlist</option></select><label>Playlist name<input id=n value="TIDAL playlist"></label><label>Playlist link<input id=u></label><label>Tracks, one per line: Artist — Track — Album<textarea id=t rows=10></textarea></label><label><input id=c type=checkbox style="width:auto"> I confirm these are real prior listens</label><br><button onclick=send()>Post selected tracks</button><button onclick=recs()>Post ListenBrainz recommendations</button><pre id=o>Loading…</pre><script>const o=document.querySelector('#o');async function api(url,opts={}){let r=await fetch(url,opts);let j=await r.json();if(!r.ok)throw Error(j.detail||JSON.stringify(j));return j}async function login(){let x=await api('/api/tidal/login',{method:'POST'});open(x.verification_url,'_blank');o.textContent='Sign in to TIDAL in the new tab, then return here and click Finish TIDAL login.'}async function finishLogin(){o.textContent=JSON.stringify(await api('/api/tidal/login/complete',{method:'POST'}),null,2)}async function playlists(){let x=await api('/api/tidal/playlists');p.innerHTML='<option>Select a playlist</option>'+x.map(v=>`<option value="${v.id}">${v.name}</option>`).join('')}async function fetchPlaylist(id){if(!id)return;let x=await api('/api/tidal/playlists/'+id);n.value=x.name;u.value=x.url;t.value=x.tracks.map(v=>`${v.artist} — ${v.title} — ${v.album||''}`).join('\\n')}async function send(){let tracks=t.value.split('\\n').filter(Boolean).map(x=>{let [artist,title,album]=x.split(' — ');return {artist,title,album}});o.textContent=JSON.stringify(await api('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_name:n.value,playlist_url:u.value,tracks,confirmed_listens:c.checked})}),null,2)}async function recs(){o.textContent=JSON.stringify(await api('/api/recommendations',{method:'POST'}),null,2)}api('/api/status').then(x=>o.textContent='Configuration: '+JSON.stringify(x,null,2)).catch(e=>o.textContent=e)</script>"""
+HTML = """<!doctype html><title>TIDAL Playlist Bridge</title><style>body{font:16px system-ui;max-width:760px;margin:3rem auto;padding:0 1rem}textarea,input,select{width:100%;margin:.4rem 0;padding:.6rem}button{padding:.6rem 1rem;margin:.3rem 0}pre{background:#eee;padding:1rem;white-space:pre-wrap}</style><h1>TIDAL Playlist Bridge</h1><p>Post selected playlist tracks to Discord. Confirming listens is only for tracks actually heard in the past.</p><button onclick=login()>Connect TIDAL</button><button onclick=finishLogin()>Finish TIDAL login</button><button onclick=playlists()>Load TIDAL playlists</button><select id=p onchange=fetchPlaylist(this.value)><option>Select a playlist</option></select><label>Playlist name<input id=n value="TIDAL playlist"></label><label>Playlist link<input id=u></label><label>Tracks, one per line: Artist — Track — Album<textarea id=t rows=10></textarea></label><label><input id=c type=checkbox style="width:auto"> I confirm these are real prior listens</label><br><button onclick=send()>Post selected tracks</button><button onclick=recs()>Post ListenBrainz recommendations</button><pre id=o>Loading…</pre><script>const o=document.querySelector('#o');async function api(url,opts={}){let r=await fetch(url,opts);let j=await r.json().catch(()=>({detail:r.statusText}));if(!r.ok)throw Error(j.detail||JSON.stringify(j));return j}async function show(action,work){try{o.textContent=action+'…';let x=await work();o.textContent=JSON.stringify(x,null,2)}catch(e){o.textContent='Error: '+e.message}}async function login(){await show('Starting TIDAL sign-in',async()=>{let x=await api('/api/tidal/login',{method:'POST'});open(x.verification_url,'_blank');return {next:'Sign in to TIDAL in the new tab, then return here and click Finish TIDAL login.'}})}async function finishLogin(){await show('Checking TIDAL authorization',()=>api('/api/tidal/login/complete',{method:'POST'}))}async function playlists(){await show('Loading TIDAL playlists',async()=>{let x=await api('/api/tidal/playlists');p.innerHTML='<option>Select a playlist</option>'+x.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');return {loaded:x.length}})}async function fetchPlaylist(id){if(!id)return;let x=await api('/api/tidal/playlists/'+id);n.value=x.name;u.value=x.url;t.value=x.tracks.map(v=>`${v.artist} — ${v.title} — ${v.album||''}`).join('\\n')}async function send(){let tracks=t.value.split('\\n').filter(Boolean).map(x=>{let [artist,title,album]=x.split(' — ');return {artist,title,album}});o.textContent=JSON.stringify(await api('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_name:n.value,playlist_url:u.value,tracks,confirmed_listens:c.checked})}),null,2)}async function recs(){o.textContent=JSON.stringify(await api('/api/recommendations',{method:'POST'}),null,2)}api('/api/status').then(x=>o.textContent='Configuration: '+JSON.stringify(x,null,2)).catch(e=>o.textContent=e)</script>"""
