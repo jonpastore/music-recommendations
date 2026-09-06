@@ -9,40 +9,26 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
-<main>
-  <header><p class="eyebrow">YOUR MUSIC, TOGETHER</p><h1>Music Playlist Bridge</h1><p>Bring playlists and listening history into one request list for Discord.</p><p id="configuration" class="muted">Checking configuration…</p></header>
-  <section aria-labelledby="source-heading">
-    <h2 id="source-heading"><span class="step">1</span> Choose your music</h2>
+<main class="app-shell">
+  <aside class="sidebar" aria-label="Playlist source setup">
+    <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true">♫</span><span>Music Playlist<br>Bridge</span></a>
+    <p class="eyebrow">SOURCE SETUP</p>
     <label for="source">Music source</label>
     <select id="source"><option value="tidal">TIDAL playlists</option><option value="spotify">Spotify playlists</option><option value="youtube_music">YouTube Music playlists</option><option value="pandora">Pandora listens</option></select>
     <p id="source-help" class="muted"></p>
-    <div class="actions"><button id="connect" type="button">Connect TIDAL</button><button id="finish-login" type="button">Finish TIDAL login</button><button id="load" type="button">Load playlists</button></div>
-    <div id="login-instructions" hidden><p id="login-text"></p><a id="login-link" target="_blank" rel="noopener noreferrer">Open sign-in page</a></div>
-    <div id="playlist-picker"><label for="playlist">Playlist</label><select id="playlist"><option value="">Load playlists to choose one</option></select>
-      <details><summary>Load a playlist by link or ID</summary><label for="playlist-input">Playlist link or ID</label><input id="playlist-input" placeholder="Paste a playlist link"><button id="load-by-id" type="button">Load this playlist</button></details>
-    </div>
-  </section>
-  <section aria-labelledby="review-heading">
-    <h2 id="review-heading"><span class="step">2</span> Review your requests</h2>
-    <div class="fields"><div><label for="playlist-name">List name</label><input id="playlist-name" value="TIDAL playlist" maxlength="200"></div><div><label for="playlist-url">Source link</label><input id="playlist-url" type="url" maxlength="500" placeholder="https://…"></div></div>
-    <label for="tracks">Tracks <span class="muted">· Artist — Track — Album</span></label>
-    <textarea id="tracks" rows="9" spellcheck="false" placeholder="Artist — Track — Album"></textarea>
-    <p class="muted">Edit the list or remove any lines you don’t want to send. Album is optional.</p>
-    <p id="track-summary" class="muted">No tracks loaded.</p>
-  </section>
-  <section aria-labelledby="send-heading">
-    <h2 id="send-heading"><span class="step">3</span> Send to Discord</h2>
-    <label for="format">Request format</label><select id="format"><option value="discography">Unique artists — Discography</option><option value="album" selected>Unique artist — Album</option><option value="tracks">Full track list</option></select>
-    <p class="muted">Each request starts with <code>!requestlist </code>. A separate <code>!auto on</code> message follows after successful posting.</p>
-    <button id="send" class="primary" type="button">Post selected tracks</button>
-    <details id="recommendations-panel"><summary>ListenBrainz recommendations</summary>
-      <p id="recommendations-help">Submit confirmed previous listens, then post your available ListenBrainz recommendation playlists. Recommendations may take time to appear.</p>
-      <div id="listen-confirmation"><label class="checkbox"><input type="checkbox" id="confirmed"> I actually listened to these tracks.</label><label for="listened-at">When you listened (end of the list, your local time)</label><input type="datetime-local" id="listened-at"><p class="muted">The selected time is used for the first track; subsequent tracks are placed one second apart. Use this only for a confirmed historical import.</p></div>
-      <button id="recommendations" type="button">Submit listens and post recommendations</button>
-    </details>
-  </section>
-  <div id="status" role="status" aria-live="polite">Ready. Choose a source or enter tracks manually.</div>
-  <footer>Credentials and saved sign-ins stay on your server.</footer>
+    <div class="stack-actions"><button id="connect" type="button">Connect TIDAL</button><button id="finish-login" type="button">Finish TIDAL login</button><button id="load" class="primary" type="button">Load playlists</button></div>
+    <div id="login-instructions" class="notice" hidden><p id="login-text"></p><a id="login-link" target="_blank" rel="noopener noreferrer">Open sign-in page</a></div>
+    <div id="playlist-picker"><label for="playlist">Playlist</label><select id="playlist"><option value="">Load playlists to choose one</option></select><details><summary>Load by link or ID</summary><label for="playlist-input">Playlist link or ID</label><input id="playlist-input" placeholder="Paste a playlist link"><button id="load-by-id" type="button">Load this playlist</button></details></div>
+    <details id="drafts-panel" class="drafts"><summary>Saved Plex checks</summary><p id="drafts-empty" class="muted">Check Plex to save a review draft.</p><div id="draft-list" class="draft-list"></div></details>
+    <p id="configuration" class="configuration muted">Checking configuration…</p>
+  </aside>
+  <div class="content" id="top">
+    <header class="page-header"><p class="eyebrow">YOUR MUSIC, TOGETHER</p><h1>Review a playlist before you request it.</h1><p>See what is already in Plex, choose between versions when needed, then send only the tracks you want.</p></header>
+    <section class="card playlist-card" aria-labelledby="playlist-heading"><div class="section-heading"><div><p class="eyebrow">PLAYLIST</p><h2 id="playlist-heading">Your track list</h2></div><p id="track-summary" class="muted">No tracks loaded.</p></div><div class="fields"><div><label for="playlist-name">List name</label><input id="playlist-name" value="TIDAL playlist" maxlength="200"></div><div><label for="playlist-url">Source link</label><input id="playlist-url" type="url" maxlength="500" placeholder="https://…"></div></div><details class="raw-editor"><summary>Edit imported track metadata <span class="muted">Preserves order and duplicates</span></summary><label for="tracks">Tracks <span class="muted">· Artist — Track — Album</span></label><textarea id="tracks" rows="10" spellcheck="false" placeholder="Artist — Track — Album"></textarea><p class="muted">Changing this list clears the Plex check. Album is optional for manually entered tracks.</p></details></section>
+    <section class="card plex-card" aria-labelledby="plex-heading"><div class="section-heading"><div><p class="eyebrow">PLEX LIBRARY</p><h2 id="plex-heading">Availability review</h2></div><span id="plex-state" class="state-pill">Not checked</span></div><div id="plex-unavailable" class="empty-state" hidden><strong>Plex is not set up yet.</strong><p>Add your Plex server URL, token, and music library in Unraid settings, then return here to check availability.</p></div><div id="plex-ready"><p id="plex-description" class="muted">Check this ordered list against your configured Plex music library. Recently added media may need a Plex library scan first.</p><div class="actions"><button id="check-plex" class="primary" type="button">Check availability in Plex</button><button id="recheck-plex" type="button" hidden>Recheck library</button></div><div id="scan-summary" class="scan-summary" hidden></div><div id="scan-tools" class="scan-tools" hidden><label class="search"><span class="sr-only">Filter tracks</span><input id="track-filter" type="search" placeholder="Filter title, artist, or status"></label><div id="status-filters" class="filter-group" aria-label="Filter by availability"><button type="button" data-filter="all" aria-pressed="true">All</button><button type="button" data-filter="matched" aria-pressed="false">In Plex</button><button type="button" data-filter="missing" aria-pressed="false">Missing</button><button type="button" data-filter="ambiguous" aria-pressed="false">Choose match</button><button type="button" data-filter="skipped" aria-pressed="false">Skipped</button></div></div><ol id="match-rows" class="match-rows" aria-label="Plex availability results"></ol><div id="plex-save" class="save-panel" hidden><div><h3>Save to Plex</h3><p id="save-copy" class="muted"></p></div><div class="save-actions"><label for="plex-title" class="sr-only">Plex playlist name</label><input id="plex-title" maxlength="200" placeholder="Plex playlist name"><button id="create-plex" class="primary" type="button">Create playlist</button><button id="update-plex" type="button" hidden>Update playlist</button></div><p id="save-result" class="muted" aria-live="polite"></p></div></div></section>
+    <section class="card dispatch-card" aria-labelledby="send-heading"><div class="section-heading"><div><p class="eyebrow">DISCORD</p><h2 id="send-heading">Request tracks</h2></div></div><label for="format">Request format</label><select id="format"><option value="discography">Unique artists — Discography</option><option value="album" selected>Unique artist — Album</option><option value="tracks">Full track list</option></select><p class="muted">Each request starts with <code>!requestlist</code>. A separate <code>!auto on</code> message follows after successful posting.</p><div class="actions"><button id="send" class="primary" type="button">Request whole list</button><button id="send-missing" type="button" disabled>Request missing from Plex</button></div><details id="recommendations-panel"><summary>ListenBrainz recommendations</summary><p id="recommendations-help">Submit confirmed previous listens, then post your available ListenBrainz recommendation playlists. Recommendations may take time to appear.</p><div id="listen-confirmation"><label class="checkbox"><input type="checkbox" id="confirmed"> I actually listened to these tracks.</label><label for="listened-at">When you listened (end of the list, your local time)</label><input id="listened-at" type="datetime-local"><p class="muted">The selected time is used for the first track; subsequent tracks are placed one second apart. Use this only for a confirmed historical import.</p></div><button id="recommendations" type="button">Submit listens and post recommendations</button></details></section>
+    <div id="status" role="status" aria-live="polite">Ready. Choose a source or enter tracks manually.</div><footer>Credentials and saved sign-ins stay on your server.</footer>
+  </div>
 </main>
 </body>
 </html>
