@@ -2,14 +2,19 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Literal
+from urllib.parse import quote
 
 import requests
 import tidalapi
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, field_validator
 
 from app.playlist import Track, as_listenbrainz_payload, discord_playlist_messages, discord_request_lines
+from app.integrations import create_router, source_status
+from app.providers import ProviderError
 from app.tidal import expiry_time_from_storage, session_data_for_storage, verification_url
 
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", "/config"))
@@ -27,18 +32,54 @@ def settings() -> dict[str, str]:
     return values
 
 
+class TrackInput(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    artist: str = Field(min_length=1, max_length=500)
+    album: str | None = Field(default=None, max_length=500)
+    duration_ms: int | None = Field(default=None, gt=0)
+    listened_at: int | None = Field(default=None, gt=0)
+
+    @field_validator("title", "artist", "album")
+    @classmethod
+    def clean_text(cls, value):
+        if value is None:
+            return None
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("Track fields cannot be blank")
+        return value
+
+
 class DispatchRequest(BaseModel):
-    playlist_name: str
-    playlist_url: str
-    tracks: list[dict]
-    discord_format: str = "album"
+    playlist_name: str = Field(max_length=200)
+    playlist_url: str = Field(max_length=500)
+    tracks: list[TrackInput] = Field(max_length=5000)
+    discord_format: Literal["album", "discography", "tracks"] = "album"
+    source: Literal["tidal", "spotify", "youtube_music", "pandora"] = "tidal"
+    confirmed_listens: bool = False
+    listened_at: int | None = Field(default=None, gt=0)
 
 
-def track_from_dict(value: dict) -> Track:
-    return Track(value["title"], value["artist"], value.get("album"), value.get("duration_ms"))
+def track_from_dict(value) -> Track:
+    if isinstance(value, TrackInput):
+        value = value.model_dump()
+    return Track(value["title"], value["artist"], value.get("album"), value.get("duration_ms"), value.get("listened_at"))
 
 
-app = FastAPI(title="TIDAL Playlist Bridge")
+app = FastAPI(title="Music Playlist Bridge")
+app.include_router(create_router(lambda: settings(), lambda: CONFIG_DIR))
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
+
+@app.exception_handler(ProviderError)
+async def provider_error(request, error):
+    return JSONResponse(status_code=error.status, content={"detail": str(error)})
+
+
+@app.exception_handler(requests.RequestException)
+async def service_error(request, error):
+    return JSONResponse(status_code=502, content={"detail": "A music service or Discord request failed. Check the configuration and try again; some messages may already have been sent."})
+
 tidal_session: tidalapi.Session | None = None
 tidal_login = None
 
@@ -69,7 +110,7 @@ def load_tidal_session() -> tidalapi.Session:
 @app.get("/api/status")
 def status():
     config = settings()
-    return {"version": os.environ.get("APP_VERSION", "development"), "discord": bool(config.get("DISCORD_WEBHOOK_URL")), "listenbrainz": bool(config.get("LISTENBRAINZ_TOKEN")), "tidal_session": (CONFIG_DIR / "tidal-session.json").exists()}
+    return {"sources": source_status(config, CONFIG_DIR), "version": os.environ.get("APP_VERSION", "development"), "discord": bool(config.get("DISCORD_WEBHOOK_URL")), "listenbrainz": bool(config.get("LISTENBRAINZ_TOKEN")), "tidal_session": (CONFIG_DIR / "tidal-session.json").exists()}
 
 
 @app.post("/api/tidal/login")
@@ -101,9 +142,20 @@ def tidal_playlists():
 def tidal_playlist(playlist_id: str):
     session = load_tidal_session()
     playlist = tidalapi.Playlist(session, playlist_id)
-    return {"id": playlist.id, "name": playlist.name, "url": f"https://listen.tidal.com/playlist/{playlist.id}", "tracks": [
+    return {"source": "tidal", "id": playlist.id, "name": playlist.name, "url": f"https://listen.tidal.com/playlist/{playlist.id}", "tracks": [
         {"title": track.name, "artist": track.artist.name, "album": track.album.name, "duration_ms": int(track.duration * 1000)} for track in playlist.tracks()
     ]}
+
+
+def post_discord_messages(webhook: str, messages: list[str], submitted: int = 0) -> None:
+    confirmed = 0
+    for message in messages:
+        try:
+            response = requests.post(webhook, json={"content": message, "allowed_mentions": {"parse": []}}, timeout=30)
+            response.raise_for_status()
+        except requests.RequestException:
+            raise HTTPException(502, f"Posting stopped after {confirmed} confirmed Discord messages and {submitted} confirmed listens. The last message may also have been accepted. Check Discord and ListenBrainz before posting again; no automatic retry was made.") from None
+        confirmed += 1
 
 
 @app.post("/api/dispatch")
@@ -116,33 +168,69 @@ def dispatch(request: DispatchRequest):
         raise HTTPException(400, "DISCORD_WEBHOOK_URL is not configured")
     if request.discord_format not in {"album", "discography", "tracks"}:
         raise HTTPException(400, "Unknown Discord format")
-    messages = discord_playlist_messages(request.playlist_name, request.playlist_url, tracks, request.discord_format)
-    for message in messages:
-        response = requests.post(config["DISCORD_WEBHOOK_URL"], json={"content": message}, timeout=30)
-        response.raise_for_status()
+    messages = discord_playlist_messages(request.playlist_name, request.playlist_url, tracks, request.discord_format, request.source)
+    messages.append("!auto on")
+    post_discord_messages(config["DISCORD_WEBHOOK_URL"], messages)
     return {"discord_posted": True, "discord_messages": len(messages)}
 
 
 @app.post("/api/recommendations")
 def recommendations(request: DispatchRequest):
     config = settings()
+    if request.source != "pandora":
+        if not request.confirmed_listens:
+            raise HTTPException(400, "Confirm that these tracks represent actual previous listens before submitting.")
+        if not request.listened_at or request.listened_at > int(time.time()):
+            raise HTTPException(400, "Choose when you listened; the time cannot be in the future.")
     user = config.get("LISTENBRAINZ_USERNAME")
     webhook = config.get("DISCORD_WEBHOOK_URL")
     token = config.get("LISTENBRAINZ_TOKEN")
     tracks = [track_from_dict(track) for track in request.tracks]
-    if not user or not webhook or not token:
+    if not user or not webhook or (request.source != "pandora" and not token):
         raise HTTPException(400, "LISTENBRAINZ_USERNAME, LISTENBRAINZ_TOKEN, and DISCORD_WEBHOOK_URL are required")
     if not tracks:
         raise HTTPException(400, "Select at least one track")
-    response = requests.post("https://api.listenbrainz.org/1/submit-listens", json=as_listenbrainz_payload(tracks, int(time.time())), headers={"Authorization": f"Token {token}"}, timeout=30)
-    response.raise_for_status()
-    data = requests.get(f"https://api.listenbrainz.org/1/user/{user}/playlists/recommendations", timeout=30).json()
-    playlists = data.get("playlists", [])
+    submitted = 0
+    if request.source != "pandora":
+        if any(track.listened_at and track.listened_at > int(time.time()) for track in tracks):
+            raise HTTPException(400, "Listen timestamps cannot be in the future.")
+        payload = as_listenbrainz_payload(tracks, request.listened_at, request.source)
+        for offset in range(0, len(tracks), 100):
+            try:
+                response = requests.post("https://api.listenbrainz.org/1/submit-listens", json={
+                    "listen_type": "import", "payload": payload["payload"][offset:offset + 100]},
+                    headers={"Authorization": f"Token {token}"}, timeout=30)
+                response.raise_for_status()
+            except requests.RequestException:
+                raise HTTPException(502, f"Import stopped after {submitted} confirmed listens. The last batch may also have been accepted. Check ListenBrainz before submitting again; no Discord messages were sent.") from None
+            submitted += len(payload["payload"][offset:offset + 100])
+    try:
+        response = requests.get(f"https://api.listenbrainz.org/1/user/{quote(user, safe='')}/playlists/recommendations", timeout=30)
+        response.raise_for_status()
+    except requests.RequestException:
+        raise HTTPException(502, f"{submitted} listens were submitted, but recommendations could not be loaded. Check ListenBrainz before re-submitting; no Discord messages were sent.") from None
+    playlists = response.json().get("playlists", [])
     if not playlists:
-        return {"listenbrainz_submitted": len(tracks), "posted": False, "reason": "No recommendations available yet"}
-    names = "\n".join(discord_request_lines([item.get('title', 'Untitled playlist') for item in playlists]))
-    requests.post(webhook, json={"content": f"New ListenBrainz recommendations for **{user}**:\n{names}\nhttps://listenbrainz.org/user/{user}/playlists/"}, timeout=30).raise_for_status()
-    return {"listenbrainz_submitted": len(tracks), "posted": True, "count": len(playlists)}
+        return {"listenbrainz_submitted": submitted, "posted": False, "reason": "No recommendations available yet"}
+    titles = [(item.get("playlist") or item).get("title", "Untitled playlist") for item in playlists]
+    # Keep recommendation commands within Discord's 2,000-character limit too.
+    messages, current = [], f"New ListenBrainz recommendations for **{user}**:\n"
+    for line in discord_request_lines(titles):
+        line = line[:1999]
+        if len(current) + len(line) + 1 > 2000:
+            messages.append(current.rstrip())
+            current = ""
+        current += line + "\n"
+    if current.strip():
+        messages.append(current.rstrip())
+    link = f"https://listenbrainz.org/user/{quote(user, safe='')}/playlists/"
+    if messages and len(messages[-1]) + len(link) + 1 <= 2000:
+        messages[-1] += "\n" + link
+    else:
+        messages.append(link)
+    messages.append("!auto on")
+    post_discord_messages(webhook, messages, submitted)
+    return {"listenbrainz_submitted": submitted, "posted": True, "count": len(playlists)}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -150,4 +238,4 @@ def home():
     return HTML
 
 
-HTML = """<!doctype html><title>TIDAL Playlist Bridge</title><style>body{font:16px system-ui;max-width:760px;margin:3rem auto;padding:0 1rem}textarea,input,select{width:100%;margin:.4rem 0;padding:.6rem}button{padding:.6rem 1rem;margin:.3rem 0}pre{background:#eee;padding:1rem;white-space:pre-wrap}</style><h1>TIDAL Playlist Bridge</h1><p>Post selected playlist tracks directly to Discord, or submit them to ListenBrainz and post available recommendations.</p><button onclick=login()>Connect TIDAL</button><button onclick=finishLogin()>Finish TIDAL login</button><button onclick=playlists()>Load TIDAL playlists</button><select id=p onchange=fetchPlaylist(this.value)><option>Select a playlist</option></select><label>Playlist name<input id=n value="TIDAL playlist"></label><label>Playlist link<input id=u></label><label>Tracks, one per line: Artist — Track — Album<textarea id=t rows=10></textarea></label><br><label>Discord post format<select id=f><option value="discography">Unique artists — Discography</option><option value="album" selected>Unique artist — Album</option><option value="tracks">Full track list</option></select></label><button onclick=send()>Post selected tracks</button><button onclick=recs()>Post ListenBrainz recommendations</button><pre id=o>Loading…</pre><script>const o=document.querySelector('#o');async function api(url,opts={}){let r=await fetch(url,opts);let j=await r.json().catch(()=>({detail:r.statusText}));if(!r.ok)throw Error(j.detail||JSON.stringify(j));return j}async function show(action,work){try{o.textContent=action+'…';let x=await work();o.textContent=JSON.stringify(x,null,2)}catch(e){o.textContent='Error: '+e.message}}async function login(){await show('Starting TIDAL sign-in',async()=>{let x=await api('/api/tidal/login',{method:'POST'});open(x.verification_url,'_blank');return {next:'Sign in to TIDAL in the new tab, then return here and click Finish TIDAL login.'}})}async function finishLogin(){await show('Checking TIDAL authorization',()=>api('/api/tidal/login/complete',{method:'POST'}))}async function playlists(){await show('Loading TIDAL playlists',async()=>{let x=await api('/api/tidal/playlists');p.innerHTML='<option>Select a playlist</option>'+x.map(v=>`<option value="${v.id}">${v.name}</option>`).join('');return {loaded:x.length}})}async function fetchPlaylist(id){if(!id)return;let x=await api('/api/tidal/playlists/'+id);n.value=x.name;u.value=x.url;t.value=x.tracks.map(v=>`${v.artist} — ${v.title} — ${v.album||''}`).join('\\n')}async function send(){let tracks=t.value.split('\\n').filter(Boolean).map(x=>{let [artist,title,album]=x.split(' — ');return {artist,title,album}});o.textContent=JSON.stringify(await api('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_name:n.value,playlist_url:u.value,tracks,discord_format:f.value})}),null,2)}async function recs(){let tracks=t.value.split('\n').filter(Boolean).map(x=>{let [artist,title,album]=x.split(' — ');return {artist,title,album}});await show('Submitting to ListenBrainz and checking recommendations',()=>api('/api/recommendations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({playlist_name:n.value,playlist_url:u.value,tracks,discord_format:f.value})}))}api('/api/status').then(x=>o.textContent='Configuration: '+JSON.stringify(x,null,2)).catch(e=>o.textContent=e)</script>"""
+HTML = (Path(__file__).parent / "static" / "index.html").read_text()

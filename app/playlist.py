@@ -1,28 +1,33 @@
 from dataclasses import dataclass
 
 
+SOURCES = {"tidal": ("TIDAL", "tidal.com"), "spotify": ("Spotify", "spotify.com"),
+           "youtube_music": ("YouTube Music", "music.youtube.com"), "pandora": ("Pandora", "pandora.com")}
+
+
 @dataclass(frozen=True)
 class Track:
     title: str
     artist: str
     album: str | None = None
     duration_ms: int | None = None
+    listened_at: int | None = None
 
 
-def as_listenbrainz_payload(tracks: list[Track], listened_at: int) -> dict:
+def as_listenbrainz_payload(tracks: list[Track], listened_at: int, source: str = "tidal") -> dict:
     """Build an honest historical-import payload for user-confirmed listens."""
     return {
         "listen_type": "import",
         "payload": [
             {
-                "listened_at": listened_at - index,
+                "listened_at": track.listened_at or listened_at - index,
                 "track_metadata": {
                     "artist_name": track.artist,
                     "track_name": track.title,
                     "release_name": track.album,
                     "additional_info": {
-                        "music_service": "tidal.com",
-                        "music_service_name": "TIDAL",
+                        "music_service": SOURCES[source][1],
+                        "music_service_name": SOURCES[source][0],
                         "submission_client": "TIDAL Playlist Bridge",
                         **({"duration_ms": track.duration_ms} if track.duration_ms else {}),
                     },
@@ -39,14 +44,16 @@ def discord_playlist_message(name: str, url: str, tracks: list[Track], mode: str
 
 
 def discord_request_lines(items: list[str]) -> list[str]:
-    prefix = "!requestlist " if len(items) > 1 else "!request "
-    return [prefix + item for item in items]
+    return ["!requestlist " + " ".join(item.split()) for item in items]
 
 
-def discord_playlist_messages(name: str, url: str, tracks: list[Track], mode: str = "album") -> list[str]:
+def discord_playlist_messages(name: str, url: str, tracks: list[Track], mode: str = "album", source: str = "tidal") -> list[str]:
     """Format unique artist/album choices as Discord-safe webhook messages."""
     messages: list[str] = []
-    prefix = f"**{name}**\n[Open in TIDAL]({url})\n\n"
+    name = " ".join(name.split())[:200]
+    url = url[:500]
+    service = SOURCES[source][0]
+    prefix = f"**{name}**\n[Open in {service}]({url})\n\n"
     current = prefix
     seen: set[tuple[str, str]] = set()
     items: list[str] = []
@@ -67,7 +74,7 @@ def discord_playlist_messages(name: str, url: str, tracks: list[Track], mode: st
     for line in discord_request_lines(items):
         if len(current) + len(line) + 1 > 2000 and current != prefix:
             messages.append(current.rstrip())
-            current = f"**{name}** (continued)\n[Open in TIDAL]({url})\n\n"
+            current = f"**{name}** (continued)\n[Open in {service}]({url})\n\n"
         if len(line) + len(current) + 1 > 2000:
             line = line[: 1999 - len(current)] + "…"
         current += line + "\n"

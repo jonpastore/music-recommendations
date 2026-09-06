@@ -44,7 +44,19 @@ class PlaylistFormattingTests(unittest.TestCase):
     def test_supports_discography_album_and_full_track_post_formats(self):
         from app.playlist import discord_playlist_messages
         tracks = [Track("One", "Artist", "Album"), Track("Two", "Artist", "Album")]
-        self.assertIn("\n!request Artist — Discography", discord_playlist_messages("P", "https://x", tracks, "discography")[0])
-        self.assertIn("\n!request Artist — Album", discord_playlist_messages("P", "https://x", tracks, "album")[0])
+        self.assertIn("\n!requestlist Artist — Discography", discord_playlist_messages("P", "https://x", tracks, "discography")[0])
+        self.assertIn("\n!requestlist Artist — Album", discord_playlist_messages("P", "https://x", tracks, "album")[0])
         self.assertIn("\n!requestlist Artist — One", discord_playlist_messages("P", "https://x", tracks, "tracks")[0])
         self.assertIn("\n!requestlist Artist — Two", discord_playlist_messages("P", "https://x", tracks, "tracks")[0])
+
+    def test_preserves_source_attribution_for_each_provider(self):
+        from app.playlist import discord_playlist_messages
+        for source, label, domain in [('spotify', 'Spotify', 'spotify.com'),
+                                      ('youtube_music', 'YouTube Music', 'music.youtube.com'),
+                                      ('pandora', 'Pandora', 'pandora.com')]:
+            with self.subTest(source=source):
+                message = discord_playlist_messages('Mix', 'https://' + domain, self.tracks, source=source)[0]
+                self.assertIn('Open in ' + label, message)
+                self.assertNotIn('Open in TIDAL', message)
+                payload = as_listenbrainz_payload(self.tracks, 1700000000, source=source)
+                self.assertEqual(domain, payload['payload'][0]['track_metadata']['additional_info']['music_service'])

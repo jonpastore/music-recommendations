@@ -2,3 +2,6 @@ __pycache__/
 .env
 config/
 .pytest_cache/
+.venv/
+.playwright-cli/
+output/
