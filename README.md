@@ -1,14 +1,14 @@
 # Music Playlist Bridge
 
-Current local image version: `0.5.0`.
+Current local image version: `0.6.0`.
 
-A self-hosted Unraid web app that loads TIDAL, Spotify, and YouTube Music playlists, plus Pandora listens recorded in ListenBrainz. Review/edit the tracks, choose unique artists, unique albums, or full tracks, and post to Discord. Every request entry uses `!requestlist `, even for a single entry, and a separate `!auto on` follows only after successful posting.
+A self-hosted Unraid web app that loads TIDAL, Spotify, and YouTube Music playlists, plus Pandora listens recorded in ListenBrainz. Match those tracks to your Plex music library, review what you have or are missing, and recreate the playlist in Plex. Review/edit the tracks, choose unique artists, unique albums, or full tracks, and post to Discord. Every request entry uses `!requestlist `, even for a single entry, and a separate `!auto on` follows only after successful posting.
 
 Playlist imports do not automatically become listening history. The optional ListenBrainz action requires confirmation and a historical listening time. Pandora scrobbles are already in ListenBrainz and are never re-submitted. ListenBrainz recommendations are account-wide, may take time to update, and are not generated instantly from the selected list. No recommendations means no Discord or auto message.
 
 ## Run on Unraid
 
-Import `unraid/templates/tidal-playlist-bridge.xml` into Docker Manager. Use image `tidal-playlist-bridge:0.5.0`, port `8090`, and map `/config` to `/mnt/user/appdata/tidal-playlist-bridge/config`. Open `http://UNRAID-IP:8090/`.
+Import `unraid/templates/tidal-playlist-bridge.xml` into Docker Manager. Use image `tidal-playlist-bridge:0.6.0`, port `8090`, and map `/config` to `/mnt/user/appdata/tidal-playlist-bridge/config`. Open `http://UNRAID-IP:8090/`.
 
 All fields below are available in the Unraid template. You can instead put them in the mounted `/config/.env` (one `KEY=value` per line, no shell quoting). Nonempty file values override container environment values. Store secrets in your Unraid configuration, never in Git. Saved OAuth tokens are persisted in `/config` across rebuilds. Changing an environment field requires applying/recreating the container; changing `.env` is picked up on the next request.
 
@@ -16,6 +16,9 @@ This is a single-user app for a trusted LAN. There is no application account/log
 
 | Setting | Purpose |
 | --- | --- |
+| `PLEX_URL` | Plex server address reachable from the bridge, e.g. `http://peaches-unraid:32400` |
+| `PLEX_TOKEN` | Plex user token; playlists belong to this user |
+| `PLEX_MUSIC_LIBRARY` | Exact music library name; defaults to `Music` |
 | `DISCORD_WEBHOOK_URL` | Required for Discord posting |
 | `LISTENBRAINZ_USERNAME` | Recommendations account and default Pandora history account |
 | `LISTENBRAINZ_TOKEN` | Required to submit confirmed historical listens |
@@ -69,6 +72,27 @@ This integration uses the **unofficial `ytmusicapi` client**, which emulates You
 
 Only previously recorded scrobbles are available. Earlier native Pandora history cannot be backfilled through this integration. If nothing appears, verify that the scrobbler has submitted a completed play with Pandora source metadata.
 
+## Match and recreate playlists in Plex
+
+1. Add your media to Plex and let its music library scan finish. Set `PLEX_URL`, `PLEX_TOKEN`, and `PLEX_MUSIC_LIBRARY` in Unraid. The server URL must be reachable **from the bridge container**; `127.0.0.1` inside it refers to the bridge, not a separate Plex container. For your server, `http://peaches-unraid:32400` may be appropriate if Plex exposes that port.
+2. Load a full source playlist or restore one of your saved checks. Check it against Plex. Nothing is posted or changed in Plex during matching.
+3. Review the availability counts and track list:
+   - **In Plex:** one confident match, or the version you selected.
+   - **Missing:** no close match found in the configured library.
+   - **Needs a choice:** there are multiple copies or different album/title/duration details. Choose the intended version; the bridge remembers your choice.
+   - **Skipped:** you explicitly left the track out of the Plex playlist.
+4. Request only missing tracks through Discord, or use the existing all-track action. Ambiguous and skipped rows are not automatically treated as missing. Artist/album deduplication only affects Discord requests; Plex uses the original individual tracks and preserves their order and repeats.
+5. Create the Plex playlist with its name and matched tracks. The UI reports how many tracks will be included and left out. Missing/unresolved tracks are never silently replaced with another recording. Playlists use existing Plex library entries; the bridge does not copy audio or need your media directories mounted.
+6. After acquiring more music, scan the Plex library and recheck the saved source list. Then explicitly update its Plex playlist. Only playlists created and tracked by this bridge are updated; unrelated same-name playlists are left alone. Source URL identifies the source playlist (manual lists without a URL use their name).
+
+Find your token using Plex's [authentication token instructions](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/), then enter it only in your Unraid/config settings. The XML method described there yields a temporary token that may need renewal; Plex also links instructions for a permanent token. The bridge uses the [Python PlexAPI client](https://python-plexapi.readthedocs.io/en/stable/modules/playlist.html). The token's Plex user owns the created playlists. Tokens are never sent to the browser or included in Plex links.
+
+**Matching is conservative.** It compares normalized title/artist, album when supplied, and duration when both sides have it. It preserves words such as “live” or “remix” instead of silently stripping them. Tracks on Various Artists albums use their track artist. YouTube videos with incomplete metadata may need a manual choice or corrected source details. “In Plex” means the item is indexed in that music library; it is not a fresh filesystem/playback check. Keep your Plex library scanned to remove stale items.
+
+The latest 20 checks, complete source track lists, manual choices, and source-to-Plex playlist identities persist in `/config/plex-state.json` (private file permissions). Checks needed for interrupted updates are retained. They are scoped to server, library and token settings so changing accounts cannot reuse another account's choices or playlist IDs. A restored check shows its original timestamp; recheck for current availability. Editing tracks invalidates the UI's availability results until you check again.
+
+**Updates protect the existing playlist.** The bridge adds the desired sequence and verifies it before removing old playlist-item occurrences, preserving the playlist ID and handling repeated tracks individually. Requests are batched in groups of at most 100 tracks. Progress is saved so a retry can resume a partial append or cleanup. New playlists use a temporary, unique name until all tracks are confirmed, which lets the bridge recover a create whose response was lost. If you delete a managed playlist in Plex, retry, reload the saved check, and explicitly create its replacement. If Plex cannot confirm an operation, the UI explains the uncertainty; check the playlist before retrying the same saved check. There can temporarily be both old and new items during an interrupted update. The bridge does not claim an atomic transaction across Plex and its local state file. A check allows up to 20,000 candidate entries across its rows; lists with excessive duplicate versions are rejected with an instruction to check a smaller group, never silently truncated. Each check/save reads the full library index, so large libraries can take longer; avoid editing a playlist in Plex while the bridge is saving it.
+
 ## Build and development
 
 ```bash
@@ -76,7 +100,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s tests -v
 node --check app/static/app.js
-VERSION=0.5.0
+VERSION=0.6.0
 docker build --build-arg VERSION="$VERSION" -t tidal-playlist-bridge:"$VERSION" .
 ```
 

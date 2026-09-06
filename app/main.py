@@ -2,7 +2,6 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Literal
 from urllib.parse import quote
 
 import requests
@@ -10,11 +9,12 @@ import tidalapi
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
 
 from app.playlist import Track, as_listenbrainz_payload, discord_playlist_messages, discord_request_lines
 from app.integrations import create_router, source_status
 from app.providers import ProviderError
+from app.models import DispatchRequest, TrackInput
+from app.plex_routes import create_router as create_plex_router, plex_status
 from app.tidal import expiry_time_from_storage, session_data_for_storage, verification_url
 
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", "/config"))
@@ -32,34 +32,6 @@ def settings() -> dict[str, str]:
     return values
 
 
-class TrackInput(BaseModel):
-    title: str = Field(min_length=1, max_length=500)
-    artist: str = Field(min_length=1, max_length=500)
-    album: str | None = Field(default=None, max_length=500)
-    duration_ms: int | None = Field(default=None, gt=0)
-    listened_at: int | None = Field(default=None, gt=0)
-
-    @field_validator("title", "artist", "album")
-    @classmethod
-    def clean_text(cls, value):
-        if value is None:
-            return None
-        value = " ".join(value.split())
-        if not value:
-            raise ValueError("Track fields cannot be blank")
-        return value
-
-
-class DispatchRequest(BaseModel):
-    playlist_name: str = Field(max_length=200)
-    playlist_url: str = Field(max_length=500)
-    tracks: list[TrackInput] = Field(max_length=5000)
-    discord_format: Literal["album", "discography", "tracks"] = "album"
-    source: Literal["tidal", "spotify", "youtube_music", "pandora"] = "tidal"
-    confirmed_listens: bool = False
-    listened_at: int | None = Field(default=None, gt=0)
-
-
 def track_from_dict(value) -> Track:
     if isinstance(value, TrackInput):
         value = value.model_dump()
@@ -68,6 +40,7 @@ def track_from_dict(value) -> Track:
 
 app = FastAPI(title="Music Playlist Bridge")
 app.include_router(create_router(lambda: settings(), lambda: CONFIG_DIR))
+app.include_router(create_plex_router(lambda: settings(), lambda: CONFIG_DIR))
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 
@@ -110,7 +83,7 @@ def load_tidal_session() -> tidalapi.Session:
 @app.get("/api/status")
 def status():
     config = settings()
-    return {"sources": source_status(config, CONFIG_DIR), "version": os.environ.get("APP_VERSION", "development"), "discord": bool(config.get("DISCORD_WEBHOOK_URL")), "listenbrainz": bool(config.get("LISTENBRAINZ_TOKEN")), "tidal_session": (CONFIG_DIR / "tidal-session.json").exists()}
+    return {"plex": plex_status(config), "sources": source_status(config, CONFIG_DIR), "version": os.environ.get("APP_VERSION", "development"), "discord": bool(config.get("DISCORD_WEBHOOK_URL")), "listenbrainz": bool(config.get("LISTENBRAINZ_TOKEN")), "tidal_session": (CONFIG_DIR / "tidal-session.json").exists()}
 
 
 @app.post("/api/tidal/login")

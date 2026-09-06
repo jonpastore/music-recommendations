@@ -1,13 +1,13 @@
 <?xml version='1.0' encoding='utf-8'?>
 <Container version="2">
   <Name>tidal-playlist-bridge</Name>
-  <Repository>tidal-playlist-bridge:0.5.0</Repository>
+  <Repository>tidal-playlist-bridge:0.6.0</Repository>
   <Network>bridge</Network>
   <WebUI>http://[IP]:[PORT:8090]/</WebUI>
   <Project>https://github.com/jonpastore/music-recommendations</Project>
-  <Overview>Import TIDAL, Spotify and YouTube Music playlists, or Pandora listens scrobbled to ListenBrainz. Review requests, post to Discord with !requestlist, then enable !auto on.</Overview>
+  <Overview>Import TIDAL, Spotify and YouTube Music playlists or Pandora scrobbled listens. See which tracks are in Plex, resolve version choices, request missing music through Discord, and recreate ordered Plex playlists.</Overview>
   <Config Name="Web UI port" Target="8090" Default="8090" Mode="tcp" Description="Web interface port" Type="Port" Display="always" Required="true" Mask="false" />
-  <Config Name="App data" Target="/config" Default="/mnt/user/appdata/tidal-playlist-bridge/config" Mode="rw" Description="TIDAL OAuth session and local configuration" Type="Path" Display="always" Required="true" Mask="false" />
+  <Config Name="App data" Target="/config" Default="/mnt/user/appdata/tidal-playlist-bridge/config" Mode="rw" Description="Saved provider sign-ins, Plex checks, match choices and local configuration" Type="Path" Display="always" Required="true" Mask="false" />
   <Config Name="Discord webhook" Target="DISCORD_WEBHOOK_URL" Default="" Mode="" Description="Discord incoming-webhook URL" Type="Variable" Display="always" Required="true" Mask="true" />
   <Config Name="ListenBrainz username" Target="LISTENBRAINZ_USERNAME" Default="" Mode="" Description="Used to fetch recommendation playlists" Type="Variable" Display="always" Required="false" Mask="false" />
   <Config Name="ListenBrainz token" Target="LISTENBRAINZ_TOKEN" Default="" Mode="" Description="Used only for confirmed historical listens" Type="Variable" Display="always" Required="false" Mask="true" />
@@ -21,4 +21,7 @@
   <Config Name="Pandora ListenBrainz username (optional)" Target="PANDORA_LISTENBRAINZ_USERNAME" Default="" Mode="" Description="Account receiving your Pandora scrobbles. Defaults to ListenBrainz username above. No Pandora password is needed." Type="Variable" Display="always" Required="false" Mask="false" />
   <Config Name="Pandora history limit" Target="PANDORA_HISTORY_LIMIT" Default="200" Mode="" Description="Maximum Pandora listens to load (1-1000), scanning up to 10000 recent ListenBrainz listens." Type="Variable" Display="always" Required="false" Mask="false" />
   <Config Name="Secure OAuth cookies (HTTPS proxy)" Target="OAUTH_COOKIE_SECURE" Default="false" Mode="" Description="Set true when accessing through an HTTPS reverse proxy. Leave false for plain HTTP LAN or loopback access." Type="Variable" Display="always" Required="false" Mask="false" />
+  <Config Name="Plex server URL" Target="PLEX_URL" Default="" Mode="" Description="Server address reachable from the bridge, e.g. http://peaches-unraid:32400." Type="Variable" Display="always" Required="false" Mask="false" />
+  <Config Name="Plex token" Target="PLEX_TOKEN" Default="" Mode="" Description="Plex user token with access to the music library. Playlists are created for this Plex user." Type="Variable" Display="always" Required="false" Mask="true" />
+  <Config Name="Plex music library" Target="PLEX_MUSIC_LIBRARY" Default="Music" Mode="" Description="Exact name of your Plex music library." Type="Variable" Display="always" Required="false" Mask="false" />
 </Container>
