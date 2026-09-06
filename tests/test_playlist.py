@@ -23,9 +23,9 @@ class PlaylistFormattingTests(unittest.TestCase):
         message = discord_playlist_message("Road Trip", "https://listen.tidal.com/playlist/example", tracks)
 
         self.assertIn("**Road Trip**", message)
-        self.assertIn("Taylor Swift — Lover", message)
-        self.assertIn("Vampire Weekend — Vampire Weekend", message)
-        self.assertIn("Mitski — Discography", message)
+        self.assertIn("\n!requestlist Taylor Swift — Lover\n", message)
+        self.assertIn("\n!requestlist Vampire Weekend — Vampire Weekend\n", message)
+        self.assertTrue(message.endswith("\n!requestlist Mitski — Discography"))
         self.assertNotIn("Paper Rings", message)
         self.assertEqual(1, message.count("Taylor Swift — Lover"))
         self.assertIn("Open in TIDAL", message)
@@ -44,7 +44,7 @@ class PlaylistFormattingTests(unittest.TestCase):
     def test_supports_discography_album_and_full_track_post_formats(self):
         from app.playlist import discord_playlist_messages
         tracks = [Track("One", "Artist", "Album"), Track("Two", "Artist", "Album")]
-        self.assertIn("Artist — Discography", discord_playlist_messages("P", "https://x", tracks, "discography")[0])
-        self.assertIn("Artist — Album", discord_playlist_messages("P", "https://x", tracks, "album")[0])
-        self.assertIn("Artist — One", discord_playlist_messages("P", "https://x", tracks, "tracks")[0])
-        self.assertIn("Artist — Two", discord_playlist_messages("P", "https://x", tracks, "tracks")[0])
+        self.assertIn("\n!request Artist — Discography", discord_playlist_messages("P", "https://x", tracks, "discography")[0])
+        self.assertIn("\n!request Artist — Album", discord_playlist_messages("P", "https://x", tracks, "album")[0])
+        self.assertIn("\n!requestlist Artist — One", discord_playlist_messages("P", "https://x", tracks, "tracks")[0])
+        self.assertIn("\n!requestlist Artist — Two", discord_playlist_messages("P", "https://x", tracks, "tracks")[0])

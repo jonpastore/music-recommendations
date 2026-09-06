@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from app.playlist import Track, as_listenbrainz_payload, discord_playlist_messages
+from app.playlist import Track, as_listenbrainz_payload, discord_playlist_messages, discord_request_lines
 from app.tidal import expiry_time_from_storage, session_data_for_storage, verification_url
 
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", "/config"))
@@ -140,7 +140,7 @@ def recommendations(request: DispatchRequest):
     playlists = data.get("playlists", [])
     if not playlists:
         return {"listenbrainz_submitted": len(tracks), "posted": False, "reason": "No recommendations available yet"}
-    names = "\n".join(f"• {item.get('title', 'Untitled playlist')}" for item in playlists)
+    names = "\n".join(discord_request_lines([item.get('title', 'Untitled playlist') for item in playlists]))
     requests.post(webhook, json={"content": f"New ListenBrainz recommendations for **{user}**:\n{names}\nhttps://listenbrainz.org/user/{user}/playlists/"}, timeout=30).raise_for_status()
     return {"listenbrainz_submitted": len(tracks), "posted": True, "count": len(playlists)}
 

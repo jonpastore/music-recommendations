@@ -38,12 +38,18 @@ def discord_playlist_message(name: str, url: str, tracks: list[Track], mode: str
     return discord_playlist_messages(name, url, tracks, mode)[0]
 
 
+def discord_request_lines(items: list[str]) -> list[str]:
+    prefix = "!requestlist " if len(items) > 1 else "!request "
+    return [prefix + item for item in items]
+
+
 def discord_playlist_messages(name: str, url: str, tracks: list[Track], mode: str = "album") -> list[str]:
     """Format unique artist/album choices as Discord-safe webhook messages."""
     messages: list[str] = []
     prefix = f"**{name}**\n[Open in TIDAL]({url})\n\n"
     current = prefix
     seen: set[tuple[str, str]] = set()
+    items: list[str] = []
     for track in tracks:
         if mode == "tracks":
             label = track.title
@@ -57,7 +63,8 @@ def discord_playlist_messages(name: str, url: str, tracks: list[Track], mode: st
         if key in seen:
             continue
         seen.add(key)
-        line = f"• {track.artist} — {label}"
+        items.append(f"{track.artist} — {label}")
+    for line in discord_request_lines(items):
         if len(current) + len(line) + 1 > 2000 and current != prefix:
             messages.append(current.rstrip())
             current = f"**{name}** (continued)\n[Open in TIDAL]({url})\n\n"
