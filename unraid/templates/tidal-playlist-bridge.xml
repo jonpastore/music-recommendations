@@ -1,7 +1,7 @@
 <?xml version='1.0' encoding='utf-8'?>
 <Container version="2">
   <Name>tidal-playlist-bridge</Name>
-  <Repository>tidal-playlist-bridge:0.6.0</Repository>
+  <Repository>tidal-playlist-bridge:0.6.1</Repository>
   <Network>bridge</Network>
   <WebUI>http://[IP]:[PORT:8090]/</WebUI>
   <Project>https://github.com/jonpastore/music-recommendations</Project>

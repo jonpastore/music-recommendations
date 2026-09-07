@@ -3,6 +3,8 @@ const byId = id => document.getElementById(id);
 const sourceNames = {tidal: 'TIDAL', spotify: 'Spotify', youtube_music: 'YouTube Music', pandora: 'Pandora'};
 const help = {tidal: 'Connect your TIDAL account, then load a playlist.', spotify: 'Connect Spotify to load your playlists. Spotify permits reading contents of playlists you own or collaborate on.', youtube_music: 'Connect to load your library, or paste a public playlist link. YouTube Music uses the unofficial ytmusicapi client.', pandora: 'Loads Pandora plays already scrobbled to ListenBrainz. Configure a Pandora-compatible scrobbler first; earlier unrecorded plays cannot be recovered.'};
 let source = 'tidal';
+let tidalSaved = false;
+let tidalPending = false;
 let originalTracks = [];
 let plexConfigured = false;
 let scan = null;
@@ -11,14 +13,33 @@ let filter = 'all';
 const busy = new Set();
 
 function report(text, error = false) { byId('status').textContent = text; byId('status').classList.toggle('error', error); }
-async function api(path, options = {}) { const response = await fetch(path, options); const data = await response.json().catch(() => ({detail: response.statusText})); if (!response.ok) { const message = Array.isArray(data.detail) ? data.detail.map(x => `${x.loc.slice(1).join('.')}: ${x.msg}`).join('\n') : data.detail; throw Error(message || 'Request failed. Try again.'); } return data; }
+async function api(path, options = {}) { const response = await fetch(path, options); const data = await response.json().catch(() => ({detail: response.statusText})); if (!response.ok) { if (path.startsWith('/api/tidal/') && response.status === 401) { tidalSaved = false; updateTidalControls('Your TIDAL login needs to be renewed. Connect again to continue.'); } const message = Array.isArray(data.detail) ? data.detail.map(x => `${x.loc.slice(1).join('.')}: ${x.msg}`).join('\n') : data.detail; throw Error(message || 'Request failed. Try again.'); } return data; }
 function setBusy(key, active) { if (active) busy.add(key); else busy.delete(key); document.querySelectorAll(`[data-busy="${key}"]`).forEach(button => { button.disabled = active; }); refreshControls(); }
 async function work(key, message, action) { if (busy.size) return; setBusy(key, true); report(message + '…'); try { return await action(); } catch (error) { report(error.message, true); return null; } finally { setBusy(key, false); } }
 function trackLine(track) { return `${track.artist || 'Unknown artist'} — ${track.title || 'Unknown track'}${track.album ? ' — ' + track.album : ''}`; }
 function resetScan(message = 'Not checked') { scan = null; scanStale = false; byId('match-rows').replaceChildren(); byId('scan-summary').hidden = true; byId('scan-tools').hidden = true; byId('plex-save').hidden = true; byId('save-result').replaceChildren(); byId('recheck-plex').hidden = true; byId('check-plex').hidden = false; setPlexState(message); refreshControls(); }
 function setPlexState(label, kind = '') { const el = byId('plex-state'); el.textContent = label; el.className = `state-pill ${kind}`; }
 function invalidateScan() { if (!scan) return; scanStale = true; setPlexState('Needs recheck', 'stale'); byId('plex-save').hidden = true; byId('send-missing').disabled = true; report('The source track list changed. Recheck Plex before using availability results.'); refreshControls(); }
-function sourceChanged() { source = byId('source').value; originalTracks = []; const name = sourceNames[source]; const history = source === 'pandora'; byId('source-help').textContent = help[source]; byId('connect').textContent = 'Connect ' + name; byId('connect').hidden = history; byId('finish-login').textContent = 'Finish ' + name + ' login'; byId('finish-login').hidden = !['tidal', 'youtube_music'].includes(source); byId('load').textContent = history ? 'Load Pandora listens' : 'Load playlists'; byId('playlist-picker').hidden = history; byId('playlist').replaceChildren(new Option('Load playlists to choose one', '')); byId('playlist-name').value = name + (history ? ' listens' : ' playlist'); byId('playlist-url').value = ''; byId('playlist-input').value = ''; byId('tracks').value = ''; byId('track-summary').textContent = 'No tracks loaded.'; byId('login-instructions').hidden = true; byId('listen-confirmation').hidden = history; byId('confirmed').checked = false; byId('listened-at').value = ''; byId('recommendations').textContent = history ? 'Post existing recommendations' : 'Submit listens and post recommendations'; byId('recommendations-help').textContent = history ? 'These plays are already in ListenBrainz. This action posts your available recommendations without submitting the listens again.' : 'Submit confirmed previous listens, then post your available ListenBrainz recommendation playlists. Recommendations may take time to appear.'; resetScan(); report(help[source]); }
+function updateTidalControls(message = '') {
+  const isTidal = source === 'tidal';
+  byId('logout').hidden = !isTidal || (!tidalSaved && !tidalPending);
+  if (!isTidal) { byId('auth-notice').hidden = true; return; }
+  byId('source-help').textContent = tidalSaved ? 'Your TIDAL sign-in is saved. Load playlists to choose your music.' : help.tidal;
+  byId('connect').hidden = tidalSaved || tidalPending;
+  byId('finish-login').hidden = !tidalPending;
+  byId('logout').textContent = tidalSaved ? 'Log out of TIDAL' : 'Cancel TIDAL sign-in';
+  const notice = byId('auth-notice');
+  notice.textContent = message || (tidalSaved ? 'TIDAL login saved. Load your playlists without signing in again.' : tidalPending ? 'TIDAL sign-in is waiting. Authorize on TIDAL, then click Finish TIDAL login.' : 'Connect once. Your login will be saved on this server.');
+  notice.classList.remove('error');
+  notice.hidden = false;
+}
+function tidalLoginComplete() {
+  tidalSaved = true; tidalPending = false;
+  byId('login-instructions').hidden = true;
+  updateTidalControls('TIDAL login complete. Your credentials are saved, including across restarts. You can load your playlists now.');
+  report('TIDAL login complete. Credentials saved.');
+}
+function sourceChanged() { source = byId('source').value; originalTracks = []; const name = sourceNames[source]; const history = source === 'pandora'; byId('source-help').textContent = help[source]; byId('connect').textContent = 'Connect ' + name; byId('connect').hidden = history; byId('finish-login').textContent = 'Finish ' + name + ' login'; byId('finish-login').hidden = !['tidal', 'youtube_music'].includes(source); byId('load').textContent = history ? 'Load Pandora listens' : 'Load playlists'; byId('playlist-picker').hidden = history; byId('playlist').replaceChildren(new Option('Load playlists to choose one', '')); byId('playlist-name').value = name + (history ? ' listens' : ' playlist'); byId('playlist-url').value = ''; byId('playlist-input').value = ''; byId('tracks').value = ''; byId('track-summary').textContent = 'No tracks loaded.'; byId('login-instructions').hidden = true; byId('listen-confirmation').hidden = history; byId('confirmed').checked = false; byId('listened-at').value = ''; byId('recommendations').textContent = history ? 'Post existing recommendations' : 'Submit listens and post recommendations'; byId('recommendations-help').textContent = history ? 'These plays are already in ListenBrainz. This action posts your available recommendations without submitting the listens again.' : 'Submit confirmed previous listens, then post your available ListenBrainz recommendation playlists. Recommendations may take time to appear.'; resetScan(); updateTidalControls(); report(help[source]); }
 function displayList(data) { originalTracks = data.tracks; byId('playlist-name').value = data.name; byId('playlist-url').value = data.url; byId('tracks').value = data.tracks.map(trackLine).join('\n'); byId('confirmed').checked = false; const summary = `${data.tracks.length} tracks loaded` + (data.skipped ? ` · ${data.skipped} unavailable entries skipped` : '') + '.'; byId('track-summary').textContent = summary; resetScan(); report(data.tracks.length ? summary + (data.note ? '\n' + data.note : '') + (data.truncated ? '\nShowing the configured history window.' : '') : source === 'pandora' ? 'No Pandora listens found in the scanned ListenBrainz history. Set up scrobbling and play some music first.' : 'This playlist has no available music tracks.'); }
 function tracksForRequest() { const lines = byId('tracks').value.split('\n').map(x => x.trim()).filter(Boolean); if (!lines.length) throw Error('Load a playlist or enter at least one track first.'); const originals = new Map(); originalTracks.forEach(track => { const line = trackLine(track); if (!originals.has(line)) originals.set(line, []); originals.get(line).push(track); }); return lines.map((line, index) => { const original = originals.get(line)?.shift(); if (original) return {...original}; const [artist, title, ...albumParts] = line.split(' — '); if (!artist?.trim() || !title?.trim()) throw Error(`Line ${index + 1}: use Artist — Track — Album (album is optional).`); return {artist: artist.trim(), title: title.trim(), album: albumParts.join(' — ').trim() || null}; }); }
 function requestData(tracks = tracksForRequest()) { return {source, playlist_name: byId('playlist-name').value.trim(), playlist_url: byId('playlist-url').value.trim(), discord_format: byId('format').value, tracks, confirmed_listens: byId('confirmed').checked, listened_at: byId('listened-at').value ? Math.floor(new Date(byId('listened-at').value).getTime() / 1000) : null}; }
@@ -41,8 +62,39 @@ byId('tracks').addEventListener('input', () => { const count = byId('tracks').va
 byId('playlist-name').addEventListener('input', invalidateScan);
 byId('playlist-url').addEventListener('input', invalidateScan);
 byId('plex-title').addEventListener('input', refreshControls);
-byId('connect').addEventListener('click', () => work('connect', 'Starting sign-in', async () => { const data = await api(`/api/${source}/login`, {method: 'POST'}); byId('login-link').href = data.authorization_url || data.verification_url; byId('login-text').textContent = data.user_code ? `Enter code ${data.user_code} on the sign-in page, then click Finish YouTube Music login.` : source === 'spotify' ? 'Open the sign-in page. Once connected, return here and load your playlists.' : 'Sign in to TIDAL, then return here and click Finish TIDAL login.'; byId('login-instructions').hidden = false; report('Sign-in is ready. Open the link above to continue.'); }));
-byId('finish-login').addEventListener('click', () => work('login', 'Checking sign-in', async () => { const data = await api(`/api/${source}/login/complete`, {method: 'POST'}); report(data.complete ? `${sourceNames[source]} connected. Load your playlists to continue.` : data.reason || 'Finish authorization on the sign-in page, then check again.'); if (data.complete) byId('login-instructions').hidden = true; }));
+byId('connect').addEventListener('click', () => work('connect', 'Starting sign-in', async () => {
+  const data = await api(`/api/${source}/login`, {method: 'POST'});
+  if (source === 'tidal' && data.complete) { tidalLoginComplete(); return; }
+  if (source === 'tidal') { tidalPending = true; updateTidalControls(); }
+  byId('login-link').href = data.authorization_url || data.verification_url;
+  byId('login-text').textContent = data.user_code ? `Enter code ${data.user_code} on the sign-in page, then click Finish YouTube Music login.` : source === 'spotify' ? 'Open the sign-in page. Once connected, return here and load your playlists.' : 'Sign in to TIDAL, then return here and click Finish TIDAL login.';
+  byId('login-instructions').hidden = false;
+  report('Sign-in is ready. Open the link above to continue.');
+}));
+byId('finish-login').addEventListener('click', () => work('login', 'Checking sign-in', async () => {
+  if (source === 'tidal') updateTidalControls('Checking whether TIDAL sign-in is complete…');
+  try {
+    const data = await api(`/api/${source}/login/complete`, {method: 'POST'});
+    if (source === 'tidal') {
+      if (data.complete) tidalLoginComplete();
+      else { updateTidalControls('Not signed in yet. Finish authorization on TIDAL, then click Finish TIDAL login again.'); report('Waiting for TIDAL authorization.'); }
+    } else {
+      report(data.complete ? `${sourceNames[source]} login complete. Credentials saved. Load your playlists to continue.` : data.reason || 'Finish authorization on the sign-in page, then check again.');
+      if (data.complete) byId('login-instructions').hidden = true;
+    }
+  } catch (error) {
+    if (source === 'tidal') { tidalPending = false; updateTidalControls(error.message); byId('auth-notice').classList.add('error'); }
+    throw error;
+  }
+}));
+byId('logout').addEventListener('click', () => work('logout', 'Logging out of TIDAL', async () => {
+  await api('/api/tidal/logout', {method:'POST'});
+  tidalSaved = false; tidalPending = false;
+  byId('login-link').removeAttribute('href'); byId('login-text').textContent = '';
+  sourceChanged();
+  updateTidalControls('Logged out of TIDAL. Saved credentials were removed from this bridge.');
+  report('Logged out of TIDAL. Connect again whenever you’re ready.');
+}));
 byId('load').addEventListener('click', () => work('load', 'Loading ' + sourceNames[source], async () => { if (source === 'pandora') return displayList(await api('/api/pandora/history')); const playlists = await api(`/api/${source}/playlists`); byId('playlist').replaceChildren(new Option(playlists.length ? 'Select a playlist' : 'No playlists found', '')); playlists.forEach(item => byId('playlist').add(new Option(item.name, item.id))); report(playlists.length ? `${playlists.length} playlists loaded. Choose one above.` : 'No playlists found. You can try a playlist link instead.'); }));
 byId('playlist').addEventListener('change', () => { if (byId('playlist').value) work('playlist', 'Loading tracks', () => loadPlaylist(byId('playlist').value)); });
 byId('load-by-id').addEventListener('click', () => work('playlist', 'Loading tracks', () => loadPlaylist(parsePlaylistInput(byId('playlist-input').value))));
@@ -53,4 +105,4 @@ byId('send').addEventListener('click', () => work('dispatch', 'Posting requests 
 byId('send-missing').addEventListener('click', () => work('dispatch', 'Posting missing requests to Discord', async () => { const missing = scan.rows.filter(row => row.status === 'missing').map(row => row.track); if (!missing.length) throw Error('There are no missing tracks in this Plex check.'); const result = await api('/api/dispatch', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(requestData(missing))}); report(`Posted ${result.discord_messages} Discord messages for tracks missing from Plex, ending with !auto on.`); }));
 byId('recommendations').addEventListener('click', () => work('recommendations', 'Checking ListenBrainz recommendations', async () => { const data = requestData(); if (source !== 'pandora' && !data.confirmed_listens) throw Error('Confirm that you actually listened to these tracks first.'); if (source !== 'pandora' && !data.listened_at) throw Error('Choose when you listened first.'); const result = await api('/api/recommendations', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)}); report(`${result.listenbrainz_submitted} listens submitted. ` + (result.posted ? `${result.count} recommendations posted, followed by !auto on.` : result.reason)); }));
 sourceChanged();
-api('/api/status').then(async data => { plexConfigured = Boolean(data.plex?.configured); const plex = data.plex || {}; byId('configuration').textContent = `Version ${data.version} · Discord ${data.discord ? 'configured' : 'not configured'} · ListenBrainz ${data.listenbrainz ? 'configured' : 'not configured'} · Plex ${plexConfigured ? `${plex.library_name || 'Music'} ready` : 'not configured'}`; byId('plex-unavailable').hidden = plexConfigured; byId('plex-ready').hidden = !plexConfigured; if (plexConfigured) await loadDrafts(); refreshControls(); }).catch(error => { byId('configuration').textContent = error.message; report('Could not load service configuration. Refresh the page and try again.', true); });
+api('/api/status').then(async data => { tidalSaved = Boolean(data.tidal_session); tidalPending = Boolean(data.tidal_login_pending); updateTidalControls(); plexConfigured = Boolean(data.plex?.configured); const plex = data.plex || {}; byId('configuration').textContent = `Version ${data.version} · Discord ${data.discord ? 'configured' : 'not configured'} · ListenBrainz ${data.listenbrainz ? 'configured' : 'not configured'} · Plex ${plexConfigured ? `${plex.library_name || 'Music'} ready` : 'not configured'}`; byId('plex-unavailable').hidden = plexConfigured; byId('plex-ready').hidden = !plexConfigured; if (plexConfigured) await loadDrafts(); refreshControls(); }).catch(error => { byId('configuration').textContent = error.message; report('Could not load service configuration. Refresh the page and try again.', true); });

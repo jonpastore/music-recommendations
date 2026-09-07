@@ -32,3 +32,12 @@ Live account tests are a subsequent user-credential checkpoint, not a claim of t
   EVIDENCE: Image sha256:7665e0baf7475fcd1d387be48570bb6edd71e13017e55b03d3a9744ab5d31471 passed 56 tests. Unraid reports 0.6.0, HTTP 200, all 16 app file hashes equal workspace, all four sources present. Template/env parity and secret masks verified; installed template fields preserve existing values. TIDAL session, Discord/ListenBrainz configuration, mounts and ports retained; stopped rollback-0.5.0 retained with restart disabled. Live browser shows the Plex setup message and all four sources without page errors.
 
 Live Plex account matching/saves await PLEX_URL and PLEX_TOKEN; Spotify and YouTube Music also await credentials. Automated provider/Plex calls used mocks and browser fixtures; no test Discord messages were posted.
+
+## Dark theme and TIDAL login controls (0.6.1)
+
+- [x] Dark desktop/mobile layout and adjacent pending/completed-login notifications; logout/cancel and saved-session controls.
+  EVIDENCE: Playwright verified pending versus complete feedback, logout/reconnect, reload reuse, one authorization start, dark color scheme, no page errors/overflow, all four source dispatch payloads, and Plex review regression. Screenshots: output/playwright/dark-login-desktop.png and dark-login-mobile.png (local only).
+- [x] Credentials persist privately across restarts and refresh, while logout cannot be undone by an in-flight read.
+  EVIDENCE: 67 tests pass locally and in production image ba370fae8b2d279c5256976e12e2c78e7a5a53e0decc9b45b877a29876c4f7f7. Tests cover active/pending separation, rejected/false/revoked authorization, valid-session reuse, private atomic storage, refresh writes, pending reuse and logout. Independent targeted review found no remaining material blockers.
+- [x] Unraid deployment preserves configured services, and live TIDAL access works after container replacement.
+  EVIDENCE: 0.6.1 is healthy; all 16 deployed app hashes match the workspace. Live saved authorization loaded 51 playlists without a new login. Credential-file mode is 0600; Plex still uses LAN. Prior 0.6.0 container retained stopped with restart disabled.

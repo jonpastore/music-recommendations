@@ -1,6 +1,6 @@
 # Music Playlist Bridge
 
-Current local image version: `0.6.0`.
+Current local image version: `0.6.1`.
 
 A self-hosted Unraid web app that loads TIDAL, Spotify, and YouTube Music playlists, plus Pandora listens recorded in ListenBrainz. Match those tracks to your Plex music library, review what you have or are missing, and recreate the playlist in Plex. Review/edit the tracks, choose unique artists, unique albums, or full tracks, and post to Discord. Every request entry uses `!requestlist `, even for a single entry, and a separate `!auto on` follows only after successful posting.
 
@@ -8,7 +8,7 @@ Playlist imports do not automatically become listening history. The optional Lis
 
 ## Run on Unraid
 
-Import `unraid/templates/tidal-playlist-bridge.xml` into Docker Manager. Use image `tidal-playlist-bridge:0.6.0`, port `8090`, and map `/config` to `/mnt/user/appdata/tidal-playlist-bridge/config`. Open `http://UNRAID-IP:8090/`.
+Import `unraid/templates/tidal-playlist-bridge.xml` into Docker Manager. Use image `tidal-playlist-bridge:0.6.1`, port `8090`, and map `/config` to `/mnt/user/appdata/tidal-playlist-bridge/config`. Open `http://UNRAID-IP:8090/`.
 
 All fields below are available in the Unraid template. You can instead put them in the mounted `/config/.env` (one `KEY=value` per line, no shell quoting). Nonempty file values override container environment values. Store secrets in your Unraid configuration, never in Git. Saved OAuth tokens are persisted in `/config` across rebuilds. Changing an environment field requires applying/recreating the container; changing `.env` is picked up on the next request.
 
@@ -72,6 +72,14 @@ This integration uses the **unofficial `ytmusicapi` client**, which emulates You
 
 Only previously recorded scrobbles are available. Earlier native Pandora history cannot be backfilled through this integration. If nothing appears, verify that the scrobbler has submitted a completed play with Pandora source metadata.
 
+## TIDAL login, persistence, and logout
+
+The interface uses a dark theme. After authorizing TIDAL, click **Finish TIDAL login**: a notice next to the login controls confirms completion only after credentials have been saved. If authorization is still pending, the notice tells you to finish on TIDAL and check again.
+
+Access/refresh tokens persist in `/config/tidal-session.json`, in the Unraid app-data mount, using atomic writes and private file permissions. Refreshed credentials are saved for subsequent restarts. A valid saved login is reused; you normally just click **Load playlists**. Tokens can still be revoked or expire, in which case reconnecting is necessary.
+
+**Log out of TIDAL** removes the bridge's saved credentials and active/pending session. It also clears the currently displayed source list. **Cancel TIDAL sign-in** clears a pending login. These actions do not remove a device from your TIDAL account's device-management page; they forget authorization in this bridge.
+
 ## Match and recreate playlists in Plex
 
 1. Add your media to Plex and let its music library scan finish. Set `PLEX_URL`, `PLEX_TOKEN`, and `PLEX_MUSIC_LIBRARY` in Unraid. The server URL must be reachable **from the bridge container**; `127.0.0.1` inside it refers to the bridge, not a separate Plex container. For your server, `http://peaches-unraid:32400` may be appropriate if Plex exposes that port.
@@ -100,7 +108,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m unittest discover -s tests -v
 node --check app/static/app.js
-VERSION=0.6.0
+VERSION=0.6.1
 docker build --build-arg VERSION="$VERSION" -t tidal-playlist-bridge:"$VERSION" .
 ```
 

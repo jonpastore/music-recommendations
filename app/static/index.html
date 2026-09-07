@@ -16,7 +16,8 @@
     <label for="source">Music source</label>
     <select id="source"><option value="tidal">TIDAL playlists</option><option value="spotify">Spotify playlists</option><option value="youtube_music">YouTube Music playlists</option><option value="pandora">Pandora listens</option></select>
     <p id="source-help" class="muted"></p>
-    <div class="stack-actions"><button id="connect" type="button">Connect TIDAL</button><button id="finish-login" type="button">Finish TIDAL login</button><button id="load" class="primary" type="button">Load playlists</button></div>
+    <div class="stack-actions"><button id="connect" type="button">Connect TIDAL</button><button id="finish-login" type="button">Finish TIDAL login</button><button id="logout" type="button" hidden>Log out of TIDAL</button><button id="load" class="primary" type="button">Load playlists</button></div>
+    <div id="auth-notice" class="notice auth-notice" role="status" aria-live="polite" hidden></div>
     <div id="login-instructions" class="notice" hidden><p id="login-text"></p><a id="login-link" target="_blank" rel="noopener noreferrer">Open sign-in page</a></div>
     <div id="playlist-picker"><label for="playlist">Playlist</label><select id="playlist"><option value="">Load playlists to choose one</option></select><details><summary>Load by link or ID</summary><label for="playlist-input">Playlist link or ID</label><input id="playlist-input" placeholder="Paste a playlist link"><button id="load-by-id" type="button">Load this playlist</button></details></div>
     <details id="drafts-panel" class="drafts"><summary>Saved Plex checks</summary><p id="drafts-empty" class="muted">Check Plex to save a review draft.</p><div id="draft-list" class="draft-list"></div></details>

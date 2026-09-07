@@ -2,6 +2,7 @@ import json
 import os
 import time
 from pathlib import Path
+from threading import RLock
 from urllib.parse import quote
 
 import requests
@@ -12,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.playlist import Track, as_listenbrainz_payload, discord_playlist_messages, discord_request_lines
 from app.integrations import create_router, source_status
-from app.providers import ProviderError
+from app.providers import ProviderError, save_json
 from app.models import DispatchRequest, TrackInput
 from app.plex_routes import create_router as create_plex_router, plex_status
 from app.tidal import expiry_time_from_storage, session_data_for_storage, verification_url
@@ -55,69 +56,124 @@ async def service_error(request, error):
 
 tidal_session: tidalapi.Session | None = None
 tidal_login = None
+tidal_pending_session = None
+tidal_login_details = None
+TIDAL_LOCK = RLock()
 
 
 def save_tidal_session(session: tidalapi.Session) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    (CONFIG_DIR / "tidal-session.json").write_text(json.dumps(session_data_for_storage(
+    save_json(CONFIG_DIR / "tidal-session.json", session_data_for_storage(
         session.token_type, session.access_token, session.refresh_token,
         session.expiry_time, session.is_pkce,
-    )))
+    ))
+
+
+def _load_tidal_session() -> tidalapi.Session:
+    global tidal_session
+    with TIDAL_LOCK:
+        if tidal_session and tidal_session.check_login():
+            save_tidal_session(tidal_session)
+            return tidal_session
+        saved = CONFIG_DIR / "tidal-session.json"
+        if not saved.exists():
+            raise HTTPException(400, "Connect TIDAL first")
+        session = tidalapi.Session()
+        credentials = json.loads(saved.read_text())
+        credentials["expiry_time"] = expiry_time_from_storage(credentials.get("expiry_time"))
+        if not session.load_oauth_session(**credentials):
+            raise HTTPException(401, "TIDAL session expired; connect again")
+        save_tidal_session(session)
+        tidal_session = session
+        return session
 
 
 def load_tidal_session() -> tidalapi.Session:
-    global tidal_session
-    if tidal_session and tidal_session.check_login():
-        return tidal_session
-    saved = CONFIG_DIR / "tidal-session.json"
-    if not saved.exists():
-        raise HTTPException(400, "Connect TIDAL first")
-    tidal_session = tidalapi.Session()
-    credentials = json.loads(saved.read_text())
-    credentials["expiry_time"] = expiry_time_from_storage(credentials.get("expiry_time"))
-    if not tidal_session.load_oauth_session(**credentials):
-        raise HTTPException(401, "TIDAL session expired; connect again")
-    return tidal_session
+    try:
+        return _load_tidal_session()
+    except tidalapi.exceptions.AuthenticationError:
+        raise HTTPException(401, "TIDAL login has expired or been revoked. Connect TIDAL again to continue.") from None
+
+
+def persist_active_tidal_session(session):
+    with TIDAL_LOCK:
+        # An in-flight playlist read must not undo a logout or account switch.
+        if tidal_session is session:
+            save_tidal_session(session)
 
 
 @app.get("/api/status")
 def status():
     config = settings()
-    return {"plex": plex_status(config), "sources": source_status(config, CONFIG_DIR), "version": os.environ.get("APP_VERSION", "development"), "discord": bool(config.get("DISCORD_WEBHOOK_URL")), "listenbrainz": bool(config.get("LISTENBRAINZ_TOKEN")), "tidal_session": (CONFIG_DIR / "tidal-session.json").exists()}
+    return {"tidal_login_pending": tidal_login is not None, "plex": plex_status(config), "sources": source_status(config, CONFIG_DIR), "version": os.environ.get("APP_VERSION", "development"), "discord": bool(config.get("DISCORD_WEBHOOK_URL")), "listenbrainz": bool(config.get("LISTENBRAINZ_TOKEN")), "tidal_session": (CONFIG_DIR / "tidal-session.json").exists()}
 
 
 @app.post("/api/tidal/login")
 def tidal_login_start():
-    global tidal_session, tidal_login
-    tidal_session = tidalapi.Session()
-    login, tidal_login = tidal_session.login_oauth()
-    return {"verification_url": verification_url(login.verification_uri_complete)}
+    global tidal_login, tidal_pending_session, tidal_login_details
+    with TIDAL_LOCK:
+        if tidal_login and tidal_login_details:
+            return tidal_login_details
+        try:
+            load_tidal_session()
+            return {"complete": True}
+        except HTTPException as error:
+            if error.status_code not in {400, 401}:
+                raise
+        tidal_pending_session = tidalapi.Session()
+        login, tidal_login = tidal_pending_session.login_oauth()
+        tidal_login_details = {"verification_url": verification_url(login.verification_uri_complete)}
+        return tidal_login_details
 
 
 @app.post("/api/tidal/login/complete")
 def tidal_login_complete():
-    if not tidal_login or not tidal_session:
-        raise HTTPException(400, "Start TIDAL login first")
-    if not tidal_login.done():
-        return {"complete": False}
-    tidal_login.result()
-    save_tidal_session(tidal_session)
-    return {"complete": True}
+    global tidal_session, tidal_login, tidal_pending_session, tidal_login_details
+    with TIDAL_LOCK:
+        if not tidal_login or not tidal_pending_session:
+            load_tidal_session()
+            return {"complete": True}
+        if not tidal_login.done():
+            return {"complete": False}
+        try:
+            if not tidal_login.result():
+                raise ValueError("TIDAL did not accept authorization")
+        except Exception:
+            tidal_login = tidal_pending_session = tidal_login_details = None
+            raise HTTPException(502, "TIDAL sign-in did not complete. Click Connect TIDAL to start again.") from None
+        save_tidal_session(tidal_pending_session)
+        tidal_session = tidal_pending_session
+        tidal_login = tidal_pending_session = tidal_login_details = None
+        return {"complete": True}
+
+
+@app.post("/api/tidal/logout")
+def tidal_logout():
+    global tidal_session, tidal_login, tidal_pending_session, tidal_login_details
+    with TIDAL_LOCK:
+        (CONFIG_DIR / "tidal-session.json").unlink(missing_ok=True)
+        if tidal_login:
+            tidal_login.cancel()
+        tidal_session = tidal_login = tidal_pending_session = tidal_login_details = None
+        return {"logged_out": True}
 
 
 @app.get("/api/tidal/playlists")
 def tidal_playlists():
     session = load_tidal_session()
-    return [{"id": playlist.id, "name": playlist.name} for playlist in session.user.playlists()]
+    result = [{"id": playlist.id, "name": playlist.name} for playlist in session.user.playlists()]
+    persist_active_tidal_session(session)
+    return result
 
 
 @app.get("/api/tidal/playlists/{playlist_id}")
 def tidal_playlist(playlist_id: str):
     session = load_tidal_session()
     playlist = tidalapi.Playlist(session, playlist_id)
-    return {"source": "tidal", "id": playlist.id, "name": playlist.name, "url": f"https://listen.tidal.com/playlist/{playlist.id}", "tracks": [
+    result = {"source": "tidal", "id": playlist.id, "name": playlist.name, "url": f"https://listen.tidal.com/playlist/{playlist.id}", "tracks": [
         {"title": track.name, "artist": track.artist.name, "album": track.album.name, "duration_ms": int(track.duration * 1000)} for track in playlist.tracks()
     ]}
+    persist_active_tidal_session(session)
+    return result
 
 
 def post_discord_messages(webhook: str, messages: list[str], submitted: int = 0) -> None:
